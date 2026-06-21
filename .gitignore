@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Experiment artifacts
+checkpoints/
+logs/
+
+# Datasets (kept on the server, not versioned)
+traffbase/data/datasets/**
+!traffbase/data/datasets/
+!traffbase/data/datasets/*/.gitkeep
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
