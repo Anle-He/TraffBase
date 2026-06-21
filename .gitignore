@@ -18,8 +18,8 @@ traffbase/data/datasets/**/*
 !traffbase/data/datasets/**/
 !traffbase/data/datasets/**/.gitkeep
 
-# Local Claude Code settings
-.claude/settings.local.json
+# Claude Code settings (local, not versioned)
+.claude/
 
 # OS
 .DS_Store
