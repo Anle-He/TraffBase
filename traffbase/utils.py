@@ -201,6 +201,17 @@ def print_log(
             print(f'Warning: Failed to write to log file {log}: {e}')
 
 
+def banner(title: str, width: int = 60, fill: str = '=') -> str:
+    return f' {title} '.center(width, fill)
+
+
+def count_parameters(model: nn.Module) -> tuple[int, int]:
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    return total, trainable
+
+
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o: object) -> object:
 

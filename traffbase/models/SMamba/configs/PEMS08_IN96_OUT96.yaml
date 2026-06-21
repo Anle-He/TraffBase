@@ -22,7 +22,7 @@ TEST:
         enabled: False
         ratio: 0.10
         steps: null
-        repeats: 5
+        repeats: 3
 
 
 # --------- Training Configs ---------

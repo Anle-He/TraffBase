@@ -110,9 +110,9 @@ def _log_dataset_shapes(
     y_test: np.ndarray,
     log: Any = None,
 ) -> None:
-    print_log(f'Trainset:\tx-{x_train.shape}\ty-{y_train.shape}', log=log)
-    print_log(f'Valset:  \tx-{x_val.shape}  \ty-{y_val.shape}', log=log)
-    print_log(f'Testset:\tx-{x_test.shape}\ty-{y_test.shape}', log=log)
+    print_log(f'{"Trainset:":<10}x-{str(x_train.shape):<22}y-{y_train.shape}', log=log)
+    print_log(f'{"Valset:":<10}x-{str(x_val.shape):<22}y-{y_val.shape}', log=log)
+    print_log(f'{"Testset:":<10}x-{str(x_test.shape):<22}y-{y_test.shape}', log=log)
 
 
 def build_LTSF_dataloader(

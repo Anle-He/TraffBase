@@ -39,7 +39,7 @@ class BaseTrainer(ABC):
         ...
 
     @abstractmethod
-    def test_model(self, model: Any, test_loader: Any) -> None:
+    def test_model(self, model: Any, test_loader: Any) -> dict[str, float]:
         ...
 
     @abstractmethod

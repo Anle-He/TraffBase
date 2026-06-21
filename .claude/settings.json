@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth status)",
+      "Bash(git check-ignore *)",
+      "Bash(echo \"exit=$?\")"
+    ]
+  }
+}

@@ -13,10 +13,10 @@ env/
 checkpoints/
 logs/
 
-# Datasets (kept on the server, not versioned)
-traffbase/data/datasets/**
-!traffbase/data/datasets/
-!traffbase/data/datasets/*/.gitkeep
+# Datasets (kept on the server, not versioned; folder skeleton preserved via .gitkeep)
+traffbase/data/datasets/**/*
+!traffbase/data/datasets/**/
+!traffbase/data/datasets/**/.gitkeep
 
 # Local Claude Code settings
 .claude/settings.local.json

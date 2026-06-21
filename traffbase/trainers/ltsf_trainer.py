@@ -13,7 +13,7 @@ from traffbase.input_mask import (
     apply_random_time_mask,
     resolve_input_mask_settings,
 )
-from traffbase.utils import compute_mse_mae, print_log
+from traffbase.utils import compute_mse_mae, print_log, banner
 
 
 class LTSFTrainer(BaseTrainer):
@@ -169,12 +169,10 @@ class LTSFTrainer(BaseTrainer):
             val_loss_list.append(val_loss)
 
             if (epoch + 1) % verbose == 0:
+                now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 print_log(
-                    datetime.datetime.now(),
-                    'Epoch',
-                    epoch + 1,
-                    f' \tTrain Loss = {train_loss:.5f}',
-                    f'Val Loss = {val_loss:.5f}',
+                    f'[{now}] Epoch {epoch + 1:>3}/{max_epochs}  '
+                    f'Train Loss = {train_loss:.5f}  Val Loss = {val_loss:.5f}',
                     log=self.log,
                 )
 
@@ -186,6 +184,11 @@ class LTSFTrainer(BaseTrainer):
             else:
                 wait += 1
                 if wait >= early_stop_patience:
+                    print_log(
+                        f'Early stopping triggered at epoch {epoch + 1} '
+                        f'(patience={early_stop_patience})',
+                        log=self.log,
+                    )
                     break
         end = time.time()
 
@@ -214,10 +217,10 @@ class LTSFTrainer(BaseTrainer):
         return model
 
     @torch.no_grad()
-    def test_model(self, model: Any, test_loader: Any) -> None:
+    def test_model(self, model: Any, test_loader: Any) -> dict[str, float]:
         model.eval()
 
-        print_log('--------- Test ---------', log=self.log)
+        print_log(banner('Test'), log=self.log)
 
         start = time.time()
         y_true, y_pred = self.predict(model, test_loader)
@@ -234,9 +237,11 @@ class LTSFTrainer(BaseTrainer):
         print_log(out_str, log=self.log, end='')
         print_log(f'Clean inference time: {end - start:.3f} s', log=self.log)
 
+        metrics = {'clean_mse': clean_mse, 'clean_mae': clean_mae}
+
         mask_config = self.cfg.get('TEST', {}).get('input_mask', {})
         if not mask_config.get('enabled', False):
-            return
+            return metrics
 
         sample_batch = next(iter(test_loader))[0]
         settings = resolve_input_mask_settings(
@@ -244,9 +249,9 @@ class LTSFTrainer(BaseTrainer):
             sequence_length=sample_batch.shape[1],
         )
         if settings is None:
-            return
+            return metrics
 
-        print_log('--------- Input Mask Test ---------', log=self.log)
+        print_log(banner('Input Mask Test'), log=self.log)
         print_log(
             f'Mask condition: {settings.description}, repeats={settings.repeats}',
             log=self.log,
@@ -295,6 +300,17 @@ class LTSFTrainer(BaseTrainer):
             f'({mae_percent:+.2f}%)',
             log=self.log,
         )
+
+        metrics.update(
+            {
+                'masked_mse': mse_mean,
+                'masked_mae': mae_mean,
+                'masked_mse_std': mse_std,
+                'masked_mae_std': mae_std,
+            }
+        )
+
+        return metrics
 
     @staticmethod
     def _percentage_change(value: float, baseline: float) -> float:

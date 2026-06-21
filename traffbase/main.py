@@ -14,7 +14,13 @@ import torch
 from models import select_model
 from trainers import select_trainer
 from data.get_dataloader import select_dataloader
-from traffbase.utils import print_log, select_loss, CustomJSONEncoder
+from traffbase.utils import (
+    print_log,
+    select_loss,
+    banner,
+    count_parameters,
+    CustomJSONEncoder,
+)
 
 DATA_DIR = Path('traffbase/data/datasets')
 LOG_DIR = Path('logs')
@@ -160,11 +166,26 @@ def main() -> None:
         cfg, device=device, scaler=scaler, log=log, seed=args.seed
     )
 
-    print_log('---------', args.model_name, '---------', log=log)
+    print_log(banner(args.model_name), log=log)
     print_log(f'Random Seed = {args.seed}', log=log)
     print_log(
         json.dumps(cfg, ensure_ascii=False, indent=4, cls=CustomJSONEncoder), log=log
     )
+
+    total_params, trainable_params = count_parameters(model)
+    print_log(
+        f'Params: total = {total_params:,}, trainable = {trainable_params:,}', log=log
+    )
+    try:
+        print_log(trainer.model_summary(model, train_loader), log=log)
+    except Exception as e:
+        # Some models (e.g. custom CUDA kernels) cannot be traced by torchinfo;
+        # the parameter count above is still reported as a fallback.
+        print_log(
+            f'INFO: detailed model summary unavailable for this model '
+            f'({type(e).__name__}); reporting parameter count only',
+            log=log,
+        )
 
     print_log(f'Checkpoints saved at: {checkpoint_path}', log=log)
     print_log(log=log)
@@ -181,7 +202,15 @@ def main() -> None:
         save=str(checkpoint_path),
     )
 
-    trainer.test_model(model, test_loader)
+    metrics = trainer.test_model(model, test_loader)
+
+    print_log(
+        f'RESULT | model={args.model_name} dataset={args.dataset_name.upper()} '
+        f'horizon={cfg["DATA"].get("out_steps")} seed={args.seed} '
+        f'params={total_params} '
+        f'mse={metrics["clean_mse"]:.5f} mae={metrics["clean_mae"]:.5f}',
+        log=log,
+    )
 
     log.close()
     torch.cuda.empty_cache()
