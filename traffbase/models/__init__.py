@@ -1,10 +1,14 @@
 from .DLinear import DLinear
 from .SMamba import SMamba
+from .DSTMambaV1 import DSTMambaV1
+from .PatchTST import PatchTST
 
 
 _MODEL_REGISTRY = {
     'DLinear': DLinear,
     'SMamba': SMamba,
+    'DSTMambaV1': DSTMambaV1,
+    'PatchTST': PatchTST,
 }
 
 

@@ -18,11 +18,11 @@ DATA:
 
 # --------- Test Configs ---------
 TEST:
-    input_mask:
-        enabled: False
-        ratio: 0.10
-        steps: null
-        repeats: 3
+  input_mask:
+    enabled: False
+    ratio: 0.10
+    steps: null
+    repeats: 3
 
 
 # --------- Training Configs ---------

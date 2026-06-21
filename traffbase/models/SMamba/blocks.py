@@ -1,15 +1,16 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
 class SeriesEmbedding(nn.Module):
-    def __init__(self, history_seq_len, d_model, dropout):
+    def __init__(self, history_seq_len: int, d_model: int, dropout: float) -> None:
         super().__init__()
 
         self.FeatureEmb = nn.Linear(history_seq_len, d_model)
         self.Dropout = nn.Dropout(dropout)
 
-    def forward(self, x_in):
+    def forward(self, x_in: torch.Tensor) -> torch.Tensor:
         # x_in: [batch_size, history_seq_len <-> num_channels]
         x_in = x_in.permute(0, 2, 1)
 
@@ -18,13 +19,15 @@ class SeriesEmbedding(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, ssm_layers, norm=None):
+    def __init__(
+        self, ssm_layers: list[nn.Module], norm: nn.Module | None = None
+    ) -> None:
         super().__init__()
 
         self.ssm_layers = nn.ModuleList(ssm_layers)
         self.norm = norm
 
-    def forward(self, x_emb):
+    def forward(self, x_emb: torch.Tensor) -> torch.Tensor:
         # x_emb: [batch_size, num_nodes, d_model]
         x_enc = x_emb
 
@@ -38,7 +41,15 @@ class Encoder(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    def __init__(self, ssm, ssm_r, d_model, d_ff, dropout, activation):
+    def __init__(
+        self,
+        ssm: nn.Module,
+        ssm_r: nn.Module | None,
+        d_model: int,
+        d_ff: int,
+        dropout: float,
+        activation: str,
+    ) -> None:
         super().__init__()
 
         self.ssm = ssm
@@ -53,7 +64,7 @@ class EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.activation = F.relu if activation == 'relu' else F.gelu
 
-    def forward(self, x_enc):
+    def forward(self, x_enc: torch.Tensor) -> torch.Tensor:
         if self.ssm_r is not None:
             ssm_out = self.ssm(x_enc) + self.ssm_r(x_enc.flip(dims=[1])).flip(dims=[1])
         else:
