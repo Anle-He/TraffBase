@@ -67,7 +67,9 @@ class SMamba(TSFModel):
             self.args.d_model, self.args.seq_len_out, bias=True
         )
 
-    def _forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward(
+        self, x: torch.Tensor, x_cov: torch.Tensor | None = None
+    ) -> torch.Tensor:
 
         x_in = x
 

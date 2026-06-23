@@ -122,8 +122,19 @@ def main() -> None:
 
     cfg = load_config(args.config_path)
 
+    in_steps = cfg['DATA'].get('in_steps', 96)
+    out_steps = cfg['DATA'].get('out_steps', 12)
+
     model_arch = select_model(args.model_name)
-    model = model_arch(**cfg['MODEL_PARAM']).to(device)
+    # seq_len_in/seq_len_out mirror DATA.in_steps/out_steps, so inject them from that
+    # single source instead of duplicating the values in every MODEL_PARAM block.
+    # The explicit keys override any stale copies left in MODEL_PARAM.
+    model_args = {
+        **cfg['MODEL_PARAM'],
+        'seq_len_in': in_steps,
+        'seq_len_out': out_steps,
+    }
+    model = model_arch(**model_args).to(device)
 
     run_time = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     log = create_log_file(args.model_name, args.task_name, args.dataset_name, run_time)
@@ -135,8 +146,8 @@ def main() -> None:
     )(
         data_path,
         batch_size=cfg['GENERAL'].get('batch_size', 32),
-        in_steps=cfg['DATA'].get('in_steps', 96),
-        out_steps=cfg['DATA'].get('out_steps', 12),
+        in_steps=in_steps,
+        out_steps=out_steps,
         x_tod=cfg['DATA'].get('x_time_of_day'),
         x_dow=cfg['DATA'].get('x_day_of_week'),
         y_tod=cfg['DATA'].get('y_time_of_day'),
@@ -206,7 +217,7 @@ def main() -> None:
 
     print_log(
         f'RESULT | model={args.model_name} dataset={args.dataset_name.upper()} '
-        f'horizon={cfg["DATA"].get("out_steps")} seed={args.seed} '
+        f'horizon={out_steps} seed={args.seed} '
         f'params={total_params} '
         f'mse={metrics["clean_mse"]:.5f} mae={metrics["clean_mae"]:.5f}',
         log=log,

@@ -1,11 +1,11 @@
-import copy
 import datetime
 import time
-from typing import Any
+from typing import Any, TextIO
 
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 from torchinfo import summary
 
 from .base_trainer import BaseTrainer
@@ -13,7 +13,7 @@ from traffbase.input_mask import (
     apply_random_time_mask,
     resolve_input_mask_settings,
 )
-from traffbase.utils import compute_mse_mae, print_log, banner
+from traffbase.utils import compute_mse_mae, print_log, banner, StandardScaler
 
 
 class LTSFTrainer(BaseTrainer):
@@ -21,27 +21,34 @@ class LTSFTrainer(BaseTrainer):
         self,
         cfg: dict[str, Any],
         device: torch.device,
-        scaler: Any,
-        log: Any = None,
+        scaler: StandardScaler,
+        log: TextIO | None = None,
         seed: int = 2024,
     ) -> None:
         super().__init__()
 
         self.cfg = cfg
         self.device = device
+        # Retained for API symmetry with the runner/dataloader and possible future
+        # inverse scaling. Metrics are computed on the normalized scale, so the
+        # trainer itself never inverts (see AGENTS.md); this field is currently unused.
         self.scaler = scaler
         self.log = log
         self.seed = seed
 
         self.clip_grad = self.cfg['OPTIM'].get('clip_grad')
 
+        # Whether to run an extra full pass over train/val after training to log
+        # their MSE/MAE. Purely diagnostic, so it can be disabled to save compute.
+        self.log_fit_metrics = self.cfg['GENERAL'].get('log_fit_metrics', True)
+
     def train_one_epoch(
         self,
-        model: Any,
-        train_loader: Any,
-        optimizer: Any,
-        scheduler: Any,
-        criterion: Any,
+        model: nn.Module,
+        train_loader: DataLoader,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler._LRScheduler,
+        criterion: nn.Module,
     ) -> float:
         model.train()
 
@@ -71,7 +78,7 @@ class LTSFTrainer(BaseTrainer):
 
     @torch.no_grad()
     def eval_model(
-        self, model: Any, val_loader: Any, criterion: Any
+        self, model: nn.Module, val_loader: DataLoader, criterion: nn.Module
     ) -> float:
         model.eval()
 
@@ -93,8 +100,8 @@ class LTSFTrainer(BaseTrainer):
     @torch.no_grad()
     def predict(
         self,
-        model: Any,
-        loader: Any,
+        model: nn.Module,
+        loader: DataLoader,
         input_mask_steps: int | None = None,
         mask_seed: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -134,17 +141,17 @@ class LTSFTrainer(BaseTrainer):
 
     def train_model(
         self,
-        model: Any,
-        train_loader: Any,
-        val_loader: Any,
-        optimizer: Any,
-        scheduler: Any,
-        criterion: Any,
+        model: nn.Module,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler._LRScheduler,
+        criterion: nn.Module,
         max_epochs: int = 10,
         early_stop_patience: int = 3,
         verbose: int = 1,
         save: str | None = None,
-    ) -> Any:
+    ) -> nn.Module:
         if max_epochs <= 0:
             raise ValueError('max_epochs must be greater than 0')
 
@@ -152,7 +159,12 @@ class LTSFTrainer(BaseTrainer):
         min_val_loss = np.inf
         best_epoch = 0
         completed_epochs = 0
-        best_state_dict = copy.deepcopy(model.state_dict())
+        # Snapshot weights to CPU so the best checkpoint does not keep a second copy
+        # resident in GPU memory. .cpu() is a no-op on a CPU model, so .clone() is
+        # required to get an independent copy rather than a live reference.
+        best_state_dict = {
+            k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+        }
 
         train_loss_list = []
         val_loss_list = []
@@ -168,7 +180,7 @@ class LTSFTrainer(BaseTrainer):
             val_loss = self.eval_model(model, val_loader, criterion)
             val_loss_list.append(val_loss)
 
-            if (epoch + 1) % verbose == 0:
+            if verbose and (epoch + 1) % verbose == 0:
                 now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 print_log(
                     f'[{now}] Epoch {epoch + 1:>3}/{max_epochs}  '
@@ -180,7 +192,10 @@ class LTSFTrainer(BaseTrainer):
                 wait = 0
                 min_val_loss = val_loss
                 best_epoch = epoch
-                best_state_dict = copy.deepcopy(model.state_dict())
+                best_state_dict = {
+                    k: v.detach().cpu().clone()
+                    for k, v in model.state_dict().items()
+                }
             else:
                 wait += 1
                 if wait >= early_stop_patience:
@@ -197,16 +212,17 @@ class LTSFTrainer(BaseTrainer):
         if save:
             torch.save(best_state_dict, save)
 
-        train_mse, train_mae = compute_mse_mae(*self.predict(model, train_loader))
-        val_mse, val_mae = compute_mse_mae(*self.predict(model, val_loader))
-
         out_str = f'Finish at epoch: {completed_epochs}\n'
         out_str += f'Best model at epoch {best_epoch + 1}:\n'
 
         out_str += f'Train Loss = {train_loss_list[best_epoch]:.5f}\n'
-        out_str += f'Train MSE = {train_mse:.5f}, MAE = {train_mae:.5f}\n'
-        out_str += f'Val Loss = {val_loss_list[best_epoch]:.5f}\n'
-        out_str += f'Val MSE = {val_mse:.5f}, MAE = {val_mae:.5f}'
+        if self.log_fit_metrics:
+            train_mse, train_mae = compute_mse_mae(*self.predict(model, train_loader))
+            out_str += f'Train MSE = {train_mse:.5f}, MAE = {train_mae:.5f}\n'
+        out_str += f'Val Loss = {val_loss_list[best_epoch]:.5f}'
+        if self.log_fit_metrics:
+            val_mse, val_mae = compute_mse_mae(*self.predict(model, val_loader))
+            out_str += f'\nVal MSE = {val_mse:.5f}, MAE = {val_mae:.5f}'
 
         print_log(out_str, log=self.log)
         print_log(
@@ -217,7 +233,7 @@ class LTSFTrainer(BaseTrainer):
         return model
 
     @torch.no_grad()
-    def test_model(self, model: Any, test_loader: Any) -> dict[str, float]:
+    def test_model(self, model: nn.Module, test_loader: DataLoader) -> dict[str, float]:
         model.eval()
 
         print_log(banner('Test'), log=self.log)
@@ -319,7 +335,7 @@ class LTSFTrainer(BaseTrainer):
 
         return (value - baseline) / baseline * 100
 
-    def model_summary(self, model: Any, dataloader: Any) -> str:
+    def model_summary(self, model: nn.Module, dataloader: DataLoader) -> str:
         x_shape = next(iter(dataloader))[0].shape
 
         return str(summary(model, x_shape, verbose=0, device=self.device))

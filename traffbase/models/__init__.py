@@ -2,6 +2,13 @@ from .DLinear import DLinear
 from .SMamba import SMamba
 from .DSTMambaV1 import DSTMambaV1
 from .PatchTST import PatchTST
+from .iTransformer import iTransformer
+from .CycleNet import CycleNet
+from .MTGNN import MTGNN
+from .Mamba import Mamba
+from .TimesNet import TimesNet
+from .FilterNet import FilterNet
+from .Amplifier import Amplifier
 
 
 _MODEL_REGISTRY = {
@@ -9,6 +16,13 @@ _MODEL_REGISTRY = {
     'SMamba': SMamba,
     'DSTMambaV1': DSTMambaV1,
     'PatchTST': PatchTST,
+    'iTransformer': iTransformer,
+    'CycleNet': CycleNet,
+    'MTGNN': MTGNN,
+    'Mamba': Mamba,
+    'TimesNet': TimesNet,
+    'FilterNet': FilterNet,
+    'Amplifier': Amplifier,
 }
 
 

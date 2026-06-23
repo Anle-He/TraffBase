@@ -120,7 +120,9 @@ class DSTMambaV1(TSFModel):
         )
         nn.init.xavier_normal_(self.node_embedding)
 
-    def _forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward(
+        self, x: torch.Tensor, x_cov: torch.Tensor | None = None
+    ) -> torch.Tensor:
 
         x_in = x  # [B, T, N]
 

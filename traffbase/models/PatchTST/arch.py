@@ -78,7 +78,9 @@ class PatchTST(TSFModel):
             head_dropout=self.args.dropout,
         )
 
-    def _forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward(
+        self, x: torch.Tensor, x_cov: torch.Tensor | None = None
+    ) -> torch.Tensor:
 
         x_in = x
 

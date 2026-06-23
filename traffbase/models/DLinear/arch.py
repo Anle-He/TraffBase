@@ -42,7 +42,9 @@ class DLinear(TSFModel):
             )
             self.linear_trend = nn.Linear(self.args.seq_len_in, self.args.seq_len_out)
 
-    def _forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward(
+        self, x: torch.Tensor, x_cov: torch.Tensor | None = None
+    ) -> torch.Tensor:
         seasonal_init, trend_init = self.decomposition(x)
         # [batch_size, seq_len, num_nodes -> batch_size, num_nodes, seq_len]
         seasonal_init, trend_init = (

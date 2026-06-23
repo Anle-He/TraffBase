@@ -13,11 +13,16 @@ class TSFModel(nn.Module, ABC):
 
     Subclasses declare their argument dataclass via the ``Args`` class variable and
     implement ``_build`` (construct submodules) and ``_forward`` (the core mapping
-    ``[B, T_in, N] -> [B, T_out, N]``). The channel slicing and the trailing
+    ``[B, T_in, N] -> [B, T_out, N]``). The channel-0 slicing and the trailing
     unsqueeze are handled here so individual models only deal with the 3-D series.
 
-    A subclass whose logic does not fit this template (e.g. it consumes the
-    covariate channels) may override ``forward`` directly.
+    ``forward`` always passes the covariate channels ``[B, T_in, N, C-1]`` as the
+    second ``_forward`` argument. Models that ignore covariates keep the
+    ``x_cov=None`` default and never touch it; a covariate-aware model (e.g.
+    CycleNet, which recovers a cycle index from time-of-day) reads them.
+
+    A subclass whose logic does not fit this template at all (e.g. it processes the
+    full 4-D tensor, channel 0 included) may override ``forward`` directly.
     """
 
     Args: ClassVar[type]
@@ -32,11 +37,19 @@ class TSFModel(nn.Module, ABC):
         ...
 
     @abstractmethod
-    def _forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Map history series ``[B, T_in, N]`` to prediction ``[B, T_out, N]``."""
+    def _forward(
+        self, x: torch.Tensor, x_cov: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Map history series ``[B, T_in, N]`` to prediction ``[B, T_out, N]``.
+
+        ``x_cov`` holds the covariate channels ``[B, T_in, N, C-1]`` (empty last dim
+        if there are none). Models that ignore covariates keep the ``x_cov=None``
+        default; a covariate-aware model reads them.
+        """
         ...
 
     def forward(self, history_data: torch.Tensor) -> torch.Tensor:
         x = history_data[..., 0]  # [B, T, N, C] -> [B, T, N]
-        y = self._forward(x)  # [B, T, N] -> [B, T_out, N]
+        x_cov = history_data[..., 1:]  # covariate channels [B, T, N, C-1]
+        y = self._forward(x, x_cov)  # [B, T, N] -> [B, T_out, N]
         return y.unsqueeze(-1)  # -> [B, T_out, N, 1]

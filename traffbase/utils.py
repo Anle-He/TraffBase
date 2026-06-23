@@ -46,58 +46,6 @@ def _validate_inputs(y_true: np.ndarray, y_pred: np.ndarray) -> None:
         )
 
 
-def mse(y_true: np.ndarray, y_pred: np.ndarray, null_val: float | int = 0) -> float:
-
-    _validate_inputs(y_true, y_pred)
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mask = _compute_mask(y_true, null_val)
-        mse_values = np.square(y_pred - y_true)
-        mse_values = np.nan_to_num(mse_values * mask)
-        return float(np.mean(mse_values))
-
-
-def mae(y_true: np.ndarray, y_pred: np.ndarray, null_val: float | int = 0) -> float:
-
-    _validate_inputs(y_true, y_pred)
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mask = _compute_mask(y_true, null_val)
-        mae_values = np.abs(y_pred - y_true)
-        mae_values = np.nan_to_num(mae_values * mask)
-        return float(np.mean(mae_values))
-
-
-def rmse(y_true: np.ndarray, y_pred: np.ndarray, null_val: float | int = 0) -> float:
-
-    _validate_inputs(y_true, y_pred)
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mask = _compute_mask(y_true, null_val)
-        rmse_values = np.square(y_pred - y_true)
-        rmse_values = np.nan_to_num(rmse_values * mask)
-        return float(np.sqrt(np.mean(rmse_values)))
-
-
-def mape(y_true: np.ndarray, y_pred: np.ndarray, null_val: float | int = 0) -> float:
-
-    _validate_inputs(y_true, y_pred)
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mask = _compute_mask(y_true, null_val)
-
-        # Replace masked values before division.
-        y_true_masked = np.where(mask > 0, y_true, 1)
-        y_pred_masked = np.where(mask > 0, y_pred, 0)
-
-        mape_values = np.abs(
-            np.divide((y_pred_masked - y_true_masked).astype('float32'), y_true_masked)
-        )
-        mape_values = np.nan_to_num(mask * mape_values)
-
-        return float(np.mean(mape_values) * 100)
-
-
 def compute_mse_mae(
     y_true: np.ndarray, y_pred: np.ndarray, null_val: float | int = 0
 ) -> tuple[float, float]:
@@ -110,28 +58,6 @@ def compute_mse_mae(
         mae_value = np.mean(np.nan_to_num(np.abs(error) * mask))
 
     return float(mse_value), float(mae_value)
-
-
-def compute_rmse_mae_mape(
-    y_true: np.ndarray, y_pred: np.ndarray, null_val: float | int = 0
-) -> tuple[float, float, float]:
-    _validate_inputs(y_true, y_pred)
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mask = _compute_mask(y_true, null_val)
-        error = y_pred - y_true
-        squared_error = np.nan_to_num(np.square(error) * mask)
-        absolute_error = np.nan_to_num(np.abs(error) * mask)
-
-        y_true_masked = np.where(mask > 0, y_true, 1)
-        percentage_error = np.abs(error.astype('float32') / y_true_masked)
-        percentage_error = np.nan_to_num(percentage_error * mask)
-
-    return (
-        float(np.sqrt(np.mean(squared_error))),
-        float(np.mean(absolute_error)),
-        float(np.mean(percentage_error) * 100),
-    )
 
 
 class StandardScaler:
@@ -147,24 +73,12 @@ class StandardScaler:
         if data.size == 0:
             raise ValueError('data cannot be empty')
 
-    def fit_transform(self, data: np.ndarray) -> np.ndarray:
-
-        self._validate_data(data)
-
-        self.mean = data.mean()
-        self.std = data.std()
-
-        if np.any(self.std == 0):
-            raise ValueError('Standard deviation is zero, cannot normalize data')
-
-        return (data - self.mean) / self.std
-
     def transform(self, data: np.ndarray) -> np.ndarray:
 
         self._validate_data(data)
 
         if self.mean is None or self.std is None:
-            raise ValueError('Scaler has not been fitted. Call fit_transform first.')
+            raise ValueError('Scaler has no mean/std; provide them at construction.')
 
         if np.any(self.std == 0):
             raise ValueError('Standard deviation is zero, cannot normalize data')
@@ -176,7 +90,7 @@ class StandardScaler:
         self._validate_data(data)
 
         if self.mean is None or self.std is None:
-            raise ValueError('Scaler has not been fitted. Call fit_transform first.')
+            raise ValueError('Scaler has no mean/std; provide them at construction.')
 
         return (data * self.std) + self.mean
 
