@@ -7,7 +7,7 @@ import torch.nn as nn
 from mamba_ssm import Mamba
 
 from ..base import TSFModel
-from .modules import (
+from .blocks import (
     GTR,
     SeriesEmbedding,
     InteractiveMamba,
