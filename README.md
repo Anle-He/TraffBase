@@ -33,6 +33,26 @@ horizon listed in the script's `HORIZONS`. Logs are written to `logs/` and check
 
 To run a single configuration directly, call `main.py` with the same flags shown above.
 
+## Data
+
+The processed datasets are versioned in this repository under
+`traffbase/data/datasets/<DATASET>/`, so experiments run out of the box — no separate
+download is needed. Each dataset directory holds `processed_data.npz` (the processed
+series, i.e. the target channel plus time-of-day / day-of-week covariates) and one
+`index_in96_out<HORIZON>.npz` of sliding-window train/val/test indices per horizon.
+Available datasets: BJ500, PEMS03, PEMS04, PEMS07, PEMS08.
+
+To regenerate them from raw inputs, place the raw series under
+`traffbase/data/raw_data/<DATASET>/` and run, from the repository root:
+
+```bash
+python traffbase/data/generate_LTSF_data.py --dataset PEMS08
+```
+
+This writes `processed_data.npz` plus the per-horizon index files into
+`traffbase/data/datasets/<DATASET>/`. Adjacency/Laplacian helpers for graph-based models
+live in `traffbase/data/process_adj_mx.py`.
+
 ## Adding a model
 
 A model lives in `traffbase/models/<Name>/` with `arch.py` (the model class plus its args
