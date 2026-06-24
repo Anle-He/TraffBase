@@ -33,6 +33,25 @@ horizon listed in the script's `HORIZONS`. Logs are written to `logs/` and check
 
 To run a single configuration directly, call `main.py` with the same flags shown above.
 
+## Adding a model
+
+A model lives in `traffbase/models/<Name>/` with `arch.py` (the model class plus its args
+dataclass) and a supporting `blocks.py`. The class subclasses `TSFModel` (`models/base.py`):
+declare the args dataclass via the `Args` class variable and implement `_build` (construct
+submodules from `self.args`) and `_forward`.
+
+`_forward` maps the history series `[B, T_in, N]` to the prediction `[B, T_out, N]`; the base
+`forward` handles slicing the target channel and re-adding the trailing dim. Covariate channels
+(time-of-day, day-of-week) are passed as the optional second argument
+`_forward(self, x, x_cov=None)` where `x_cov` is `[B, T_in, N, C-1]` — ignore it unless the
+model needs it (see `CycleNet`). `seq_len_in`/`seq_len_out` are injected from
+`DATA.in_steps`/`out_steps`, so declare them as the first two args fields but do **not** put
+them in `MODEL_PARAM`.
+
+Finally, register the class in `select_model` (`traffbase/models/__init__.py`), add a config
+per horizon under `traffbase/models/<Name>/configs/`, and a launcher in `scripts/<DATASET>/`.
+See `AGENTS.md` for the full conventions (config keys such as `num_nodes`, `use_*` flags, etc.).
+
 ## Test-time input masking
 
 An optional `TEST.input_mask` section evaluates the trained model under random missing

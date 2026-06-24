@@ -19,7 +19,7 @@ DATA:
 # --------- Test Configs ---------
 TEST:
   input_mask:
-    enabled: True
+    enabled: False
     ratio: null
     steps: 24
     repeats: 1
