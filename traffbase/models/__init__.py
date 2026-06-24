@@ -9,6 +9,8 @@ from .Mamba import Mamba
 from .TimesNet import TimesNet
 from .FilterNet import FilterNet
 from .Amplifier import Amplifier
+from .FoMoV1 import FoMoV1
+from .CAM import CAM
 
 
 _MODEL_REGISTRY = {
@@ -23,6 +25,8 @@ _MODEL_REGISTRY = {
     'TimesNet': TimesNet,
     'FilterNet': FilterNet,
     'Amplifier': Amplifier,
+    'FoMoV1': FoMoV1,
+    'CAM': CAM,
 }
 
 
