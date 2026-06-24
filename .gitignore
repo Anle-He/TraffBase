@@ -9,14 +9,13 @@ __pycache__/
 venv/
 env/
 
-# Experiment artifacts
-checkpoints/
-logs/
+# Experiment artifacts (keep the empty folder skeleton, ignore the contents)
+checkpoints/*
+!checkpoints/.gitkeep
+logs/*
+!logs/.gitkeep
 
-# Datasets (kept on the server, not versioned; folder skeleton preserved via .gitkeep)
-traffbase/data/datasets/**/*
-!traffbase/data/datasets/**/
-!traffbase/data/datasets/**/.gitkeep
+# Datasets: the processed .npz files ARE versioned in this repo.
 
 # Claude Code settings (local, not versioned)
 .claude/
