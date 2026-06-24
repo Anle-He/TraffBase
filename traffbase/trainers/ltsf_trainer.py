@@ -38,6 +38,16 @@ class LTSFTrainer(BaseTrainer):
 
         self.clip_grad = self.cfg['OPTIM'].get('clip_grad')
 
+        # FreDF: optional frequency-domain auxiliary loss added to the prediction
+        # loss during training (Wang et al., "FreDF"). Disabled unless OPTIM.use_fredf
+        # is set, so models that do not request it train exactly as before.
+        optim = self.cfg['OPTIM']
+        self.use_fredf = optim.get('use_fredf', False)
+        self.fredf_loss = optim.get('fredf_loss', 'MAE')
+        self.fredf_mode = optim.get('fredf_mode', 'fft')
+        self.fredf_weight = optim.get('fredf_weight', 0.0)
+        self.module_first = optim.get('module_first', True)
+
         # Whether to run an extra full pass over train/val after training to log
         # their MSE/MAE. Purely diagnostic, so it can be disabled to save compute.
         self.log_fit_metrics = self.cfg['GENERAL'].get('log_fit_metrics', True)
@@ -61,6 +71,8 @@ class LTSFTrainer(BaseTrainer):
             out_batch = model(x_batch)
 
             loss = criterion(out_batch, y_batch)
+            if self.use_fredf:
+                loss = loss + self.fredf_weight * self._fredf_loss(out_batch, y_batch)
             batch_size = x_batch.size(0)
             total_loss += loss.item() * batch_size
             total_samples += batch_size
@@ -75,6 +87,32 @@ class LTSFTrainer(BaseTrainer):
         scheduler.step()
 
         return epoch_loss
+
+    def _fredf_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Frequency-domain discrepancy between prediction and target.
+
+        Both tensors are ``[B, T_out, N, 1]``; the transform is taken over the time
+        axis (``dim=1``). ``module_first`` controls whether the reduction happens on
+        the complex magnitude (True) or on the complex difference before taking the
+        magnitude (False), matching the original FreDF formulation.
+        """
+        if self.fredf_mode == 'fft':
+            diff = torch.fft.fft(pred, dim=1) - torch.fft.fft(target, dim=1)
+        elif self.fredf_mode == 'rfft-2D':
+            diff = torch.fft.rfft2(pred) - torch.fft.rfft2(target)
+        else:
+            raise ValueError(f"Unknown fredf_mode '{self.fredf_mode}'")
+
+        if self.fredf_loss == 'MAE':
+            return diff.abs().mean() if self.module_first else diff.mean().abs()
+        elif self.fredf_loss == 'MSE':
+            return (
+                (diff.abs() ** 2).mean()
+                if self.module_first
+                else (diff**2).mean().abs()
+            )
+        else:
+            raise ValueError(f"Unknown fredf_loss '{self.fredf_loss}'")
 
     @torch.no_grad()
     def eval_model(
@@ -169,6 +207,8 @@ class LTSFTrainer(BaseTrainer):
         train_loss_list = []
         val_loss_list = []
 
+        print_log(banner('Training'), log=self.log)
+
         start = time.time()
         for epoch in range(max_epochs):
             completed_epochs = epoch + 1
@@ -212,21 +252,29 @@ class LTSFTrainer(BaseTrainer):
         if save:
             torch.save(best_state_dict, save)
 
-        out_str = f'Finish at epoch: {completed_epochs}\n'
-        out_str += f'Best model at epoch {best_epoch + 1}:\n'
+        train_loss_best = train_loss_list[best_epoch]
+        val_loss_best = val_loss_list[best_epoch]
 
-        out_str += f'Train Loss = {train_loss_list[best_epoch]:.5f}\n'
+        print_log(banner('Best Model'), log=self.log)
+        print_log(f'{"Epoch":<11}: {best_epoch + 1}/{completed_epochs}', log=self.log)
         if self.log_fit_metrics:
             train_mse, train_mae = compute_mse_mae(*self.predict(model, train_loader))
-            out_str += f'Train MSE = {train_mse:.5f}, MAE = {train_mae:.5f}\n'
-        out_str += f'Val Loss = {val_loss_list[best_epoch]:.5f}'
-        if self.log_fit_metrics:
             val_mse, val_mae = compute_mse_mae(*self.predict(model, val_loader))
-            out_str += f'\nVal MSE = {val_mse:.5f}, MAE = {val_mae:.5f}'
-
-        print_log(out_str, log=self.log)
+            print_log(
+                f'{"Train":<11}: Loss = {train_loss_best:.5f}   '
+                f'MSE = {train_mse:.5f}   MAE = {train_mae:.5f}',
+                log=self.log,
+            )
+            print_log(
+                f'{"Val":<11}: Loss = {val_loss_best:.5f}   '
+                f'MSE = {val_mse:.5f}   MAE = {val_mae:.5f}',
+                log=self.log,
+            )
+        else:
+            print_log(f'{"Train":<11}: Loss = {train_loss_best:.5f}', log=self.log)
+            print_log(f'{"Val":<11}: Loss = {val_loss_best:.5f}', log=self.log)
         print_log(
-            f'Training time per epoch: {(end - start) / completed_epochs:.3f} s',
+            f'{"Epoch time":<11}: {(end - start) / completed_epochs:.3f} s',
             log=self.log,
         )
 
@@ -245,13 +293,12 @@ class LTSFTrainer(BaseTrainer):
         out_steps = y_pred.shape[1]
 
         clean_mse, clean_mae = compute_mse_mae(y_true, y_pred)
-        out_str = (
-            f'Clean All Steps (1-{out_steps}) '
-            f'MSE = {clean_mse:.5f}, MAE = {clean_mae:.5f}\n'
+        print_log(
+            f'{"Clean":<11}: MSE = {clean_mse:.5f}   MAE = {clean_mae:.5f}   '
+            f'(steps 1-{out_steps})',
+            log=self.log,
         )
-
-        print_log(out_str, log=self.log, end='')
-        print_log(f'Clean inference time: {end - start:.3f} s', log=self.log)
+        print_log(f'{"Infer time":<11}: {end - start:.3f} s', log=self.log)
 
         metrics = {'clean_mse': clean_mse, 'clean_mae': clean_mae}
 
