@@ -1,0 +1,68 @@
+# --------- General Configs ---------
+GENERAL:
+  runner: 'LTSFTrainer'
+  batch_size: 32
+  max_epochs: 20
+  early_stop_patience: 5
+
+
+# --------- Data Configs ---------
+DATA:
+  in_steps: 96
+  out_steps: 96
+  x_time_of_day: True
+  x_day_of_week: True
+  y_time_of_day: False
+  y_day_of_week: False
+
+
+# --------- Test Configs ---------
+TEST:
+  input_mask:
+    enabled: False
+    ratio: 0.10
+    steps: null
+    repeats: 5
+
+
+# --------- Training Configs ---------
+OPTIM:
+  loss: 'MSE'
+  initial_lr: 0.001
+  lr_scheduler_type: 'ExponentialLR'
+  lr_scheduler_gamma: 0.5
+  clip_grad: 5.0
+  # FreDF frequency-domain auxiliary loss (consumed by LTSFTrainer)
+  use_fredf: True
+  fredf_loss: 'MAE'
+  fredf_mode: 'fft'
+  fredf_weight: 0.8
+  module_first: True
+
+
+# --------- Model Configs ---------
+MODEL_PARAM:
+  num_nodes: 170
+  cycle_len: 288
+  day_len: 7
+  use_revin: True
+  d_model: 512
+  d_ff: 512
+  expert_d_ff: 128
+  e_layers: 2
+  emb_dropout: 0.05
+  use_freq: True
+  ffn_dropout: 0.05
+  ffn_activation: 'gelu'
+  num_experts: 3
+  d_state: 32
+  d_conv: 2
+  expand: 1
+  use_stid_residual: True
+  stid_embed_dim: 32
+  stid_node_dim: 32
+  stid_tod_dim: 32
+  stid_dow_dim: 32
+  stid_num_layers: 3
+  stid_dropout: 0.15
+  stid_residual_scale_init: 0.1
