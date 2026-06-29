@@ -65,11 +65,13 @@ class LTSFTrainer(BaseTrainer):
     ) -> float:
         model.train()
 
-        total_loss = 0.0
+        # Accumulate on-device and sync once per epoch; calling .item() per batch
+        # would force a GPU->CPU sync every step and stall the pipeline.
+        total_loss = torch.zeros((), device=self.device)
         total_samples = 0
         for x_batch, y_batch in train_loader:
-            x_batch = x_batch.float().to(self.device)
-            y_batch = y_batch.float().to(self.device)
+            x_batch = x_batch.float().to(self.device, non_blocking=True)
+            y_batch = y_batch.float().to(self.device, non_blocking=True)
 
             out_batch = model(x_batch)
 
@@ -77,16 +79,16 @@ class LTSFTrainer(BaseTrainer):
             if self.use_fredf:
                 loss = loss + self.fredf_weight * self._fredf_loss(out_batch, y_batch)
             batch_size = x_batch.size(0)
-            total_loss += loss.item() * batch_size
+            total_loss += loss.detach() * batch_size
             total_samples += batch_size
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
             if self.clip_grad:
                 nn.utils.clip_grad_norm_(model.parameters(), self.clip_grad)
             optimizer.step()
 
-        epoch_loss = total_loss / total_samples
+        epoch_loss = (total_loss / total_samples).item()
         scheduler.step()
 
         return epoch_loss
@@ -117,28 +119,28 @@ class LTSFTrainer(BaseTrainer):
         else:
             raise ValueError(f"Unknown fredf_loss '{self.fredf_loss}'")
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def eval_model(
         self, model: nn.Module, val_loader: DataLoader, criterion: nn.Module
     ) -> float:
         model.eval()
 
-        total_loss = 0.0
+        total_loss = torch.zeros((), device=self.device)
         total_samples = 0
         for x_batch, y_batch in val_loader:
-            x_batch = x_batch.float().to(self.device)
-            y_batch = y_batch.float().to(self.device)
+            x_batch = x_batch.float().to(self.device, non_blocking=True)
+            y_batch = y_batch.float().to(self.device, non_blocking=True)
 
             out_batch = model(x_batch)
 
             loss = criterion(out_batch, y_batch)
             batch_size = x_batch.size(0)
-            total_loss += loss.item() * batch_size
+            total_loss += loss * batch_size
             total_samples += batch_size
 
-        return total_loss / total_samples
+        return (total_loss / total_samples).item()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict(
         self,
         model: nn.Module,
@@ -166,8 +168,8 @@ class LTSFTrainer(BaseTrainer):
                 )
                 mask_seed += x_batch.size(0)
 
-            x_batch = x_batch.to(self.device)
-            y_batch = y_batch.float().to(self.device)
+            x_batch = x_batch.to(self.device, non_blocking=True)
+            y_batch = y_batch.float().to(self.device, non_blocking=True)
 
             out_batch = model(x_batch)
 
@@ -201,10 +203,11 @@ class LTSFTrainer(BaseTrainer):
         best_epoch = 0
         completed_epochs = 0
         # Snapshot weights to CPU so the best checkpoint does not keep a second copy
-        # resident in GPU memory. .cpu() is a no-op on a CPU model, so .clone() is
-        # required to get an independent copy rather than a live reference.
+        # resident in GPU memory. copy=True forces an independent copy in both cases:
+        # off-GPU it is the device->host transfer, on a CPU model it avoids aliasing
+        # the live parameter (where .cpu() would be a no-op).
         best_state_dict = {
-            k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+            k: v.detach().to('cpu', copy=True) for k, v in model.state_dict().items()
         }
 
         train_loss_list = []
@@ -236,7 +239,7 @@ class LTSFTrainer(BaseTrainer):
                 min_val_loss = val_loss
                 best_epoch = epoch
                 best_state_dict = {
-                    k: v.detach().cpu().clone()
+                    k: v.detach().to('cpu', copy=True)
                     for k, v in model.state_dict().items()
                 }
             else:
@@ -284,7 +287,7 @@ class LTSFTrainer(BaseTrainer):
 
         return model
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def test_model(self, model: nn.Module, test_loader: DataLoader) -> dict[str, float]:
         model.eval()
 
