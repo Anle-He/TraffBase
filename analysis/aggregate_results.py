@@ -2,7 +2,7 @@
 
 Each run appends one line of the form::
 
-    RESULT | model=SMamba dataset=PEMS08 horizon=96 seed=2024 params=1234567 mse=0.20000 mae=0.30000
+    RESULT | model=SMamba dataset=PEMS08 horizon=96 seed=2024 params=1234567 epoch_time=12.345 infer_time=1.234 mse=0.20000 mae=0.30000
 
 This script scans a log directory for those lines, groups them by
 (model, dataset, horizon), and reports the mean +/- std of each metric across
@@ -23,7 +23,11 @@ from typing import Any
 
 RESULT_PREFIX = 'RESULT |'
 GROUP_KEYS = ('model', 'dataset', 'horizon')
-METRICS = ('mse', 'mae')
+# Error metrics (5 decimals) and wall-clock timings (seconds, 3 decimals). Both
+# are averaged with mean +/- std across seeds; they differ only in formatting.
+ERROR_METRICS = ('mse', 'mae')
+TIME_METRICS = ('epoch_time', 'infer_time')
+METRICS = ERROR_METRICS + TIME_METRICS
 
 
 def parse_result_line(line: str) -> dict[str, str] | None:
@@ -65,6 +69,11 @@ def aggregate(records: list[dict[str, str]]) -> list[dict[str, Any]]:
         row: dict[str, Any] = dict(zip(GROUP_KEYS, key))
         row['seeds'] = len(group)
 
+        # Parameter count is fixed by the model/config, so it is constant across
+        # seeds; report the single value (blank if any seed disagrees).
+        param_values = {r['params'] for r in group if 'params' in r}
+        row['params'] = param_values.pop() if len(param_values) == 1 else ''
+
         for metric in METRICS:
             values = [float(r[metric]) for r in group if metric in r]
             row[f'{metric}_mean'] = statistics.fmean(values) if values else float('nan')
@@ -88,19 +97,45 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         print('No RESULT lines found.')
         return
 
-    header = (
-        f'{"model":<12}{"dataset":<10}{"horizon":>8}{"seeds":>7}'
-        f'{"MSE (mean+/-std)":>24}{"MAE (mean+/-std)":>24}'
-    )
+    # (title, width) for each column. The four aggregated columns share a width
+    # so the mean +/- std values line up under their headers.
+    AGG_W = 22
+    columns = [
+        ('model', 12, '<'),
+        ('dataset', 10, '<'),
+        ('horizon', 8, '>'),
+        ('seeds', 7, '>'),
+        ('params', 14, '>'),
+        ('MSE (mean+/-std)', AGG_W, '>'),
+        ('MAE (mean+/-std)', AGG_W, '>'),
+        ('Train s/epoch', AGG_W, '>'),
+        ('Infer s', AGG_W, '>'),
+    ]
+
+    header = ''.join(f'{title:{align}{width}}' for title, width, align in columns)
     print(header)
     print('-' * len(header))
+
+    def fmt_agg(mean: float, std: float, decimals: int) -> str:
+        return f'{mean:.{decimals}f} +/- {std:.{decimals}f}'
+
     for row in rows:
-        mse = f'{row["mse_mean"]:.5f} +/- {row["mse_std"]:.5f}'
-        mae = f'{row["mae_mean"]:.5f} +/- {row["mae_std"]:.5f}'
-        print(
-            f'{row["model"]:<12}{row["dataset"]:<10}{row["horizon"]:>8}'
-            f'{row["seeds"]:>7}{mse:>24}{mae:>24}'
-        )
+        params = f'{int(row["params"]):,}' if row['params'] != '' else '-'
+        values = [
+            row['model'],
+            row['dataset'],
+            row['horizon'],
+            row['seeds'],
+            params,
+            fmt_agg(row['mse_mean'], row['mse_std'], 5),
+            fmt_agg(row['mae_mean'], row['mae_std'], 5),
+            fmt_agg(row['epoch_time_mean'], row['epoch_time_std'], 3),
+            fmt_agg(row['infer_time_mean'], row['infer_time_std'], 3),
+        ]
+        print(''.join(
+            f'{value:{align}{width}}'
+            for value, (_, width, align) in zip(values, columns)
+        ))
 
 
 def write_csv(rows: list[dict[str, Any]], csv_path: Path) -> None:
@@ -109,10 +144,15 @@ def write_csv(rows: list[dict[str, Any]], csv_path: Path) -> None:
         'dataset',
         'horizon',
         'seeds',
+        'params',
         'mse_mean',
         'mse_std',
         'mae_mean',
         'mae_std',
+        'epoch_time_mean',
+        'epoch_time_std',
+        'infer_time_mean',
+        'infer_time_std',
     ]
     with csv_path.open('w', encoding='utf-8', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

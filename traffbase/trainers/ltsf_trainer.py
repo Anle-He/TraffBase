@@ -36,6 +36,9 @@ class LTSFTrainer(BaseTrainer):
         self.log = log
         self.seed = seed
 
+        # Mean wall-clock seconds per training epoch, populated by ``fit``.
+        self.epoch_time = float('nan')
+
         self.clip_grad = self.cfg['OPTIM'].get('clip_grad')
 
         # FreDF: optional frequency-domain auxiliary loss added to the prediction
@@ -273,8 +276,9 @@ class LTSFTrainer(BaseTrainer):
         else:
             print_log(f'{"Train":<11}: Loss = {train_loss_best:.5f}', log=self.log)
             print_log(f'{"Val":<11}: Loss = {val_loss_best:.5f}', log=self.log)
+        self.epoch_time = (end - start) / completed_epochs
         print_log(
-            f'{"Epoch time":<11}: {(end - start) / completed_epochs:.3f} s',
+            f'{"Epoch time":<11}: {self.epoch_time:.3f} s',
             log=self.log,
         )
 
@@ -298,9 +302,14 @@ class LTSFTrainer(BaseTrainer):
             f'(steps 1-{out_steps})',
             log=self.log,
         )
-        print_log(f'{"Infer time":<11}: {end - start:.3f} s', log=self.log)
+        infer_time = end - start
+        print_log(f'{"Infer time":<11}: {infer_time:.3f} s', log=self.log)
 
-        metrics = {'clean_mse': clean_mse, 'clean_mae': clean_mae}
+        metrics = {
+            'clean_mse': clean_mse,
+            'clean_mae': clean_mae,
+            'infer_time': infer_time,
+        }
 
         mask_config = self.cfg.get('TEST', {}).get('input_mask', {})
         if not mask_config.get('enabled', False):

@@ -219,6 +219,7 @@ def main() -> None:
         f'RESULT | model={args.model_name} dataset={args.dataset_name.upper()} '
         f'horizon={out_steps} seed={args.seed} '
         f'params={total_params} '
+        f'epoch_time={trainer.epoch_time:.3f} infer_time={metrics["infer_time"]:.3f} '
         f'mse={metrics["clean_mse"]:.5f} mae={metrics["clean_mae"]:.5f}',
         log=log,
     )

@@ -8,8 +8,15 @@ Run them from the repository root.
 ## aggregate_results.py
 
 Scans `logs/` for the `RESULT | ...` lines emitted at the end of each run,
-groups by (model, dataset, horizon), and reports mean +/- std of MSE/MAE across
-seeds.
+groups by (model, dataset, horizon), and reports across seeds:
+
+- the parameter count (constant per model/config, shown as a single value);
+- mean +/- std of MSE/MAE;
+- mean +/- std of the training time (seconds per epoch) and inference time
+  (seconds for the test pass).
+
+Older `RESULT` lines without the `params`/`epoch_time`/`infer_time` fields are
+still parsed; the missing columns show `-` or `nan`.
 
 ```bash
 # Print the aggregated table
