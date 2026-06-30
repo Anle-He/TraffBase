@@ -2,11 +2,12 @@
 
 Each run appends one line of the form::
 
-    RESULT | model=SMamba dataset=PEMS08 horizon=96 seed=2024 params=1234567 epoch_time=12.345 infer_time=1.234 mse=0.20000 mae=0.30000
+    RESULT | model=SMamba dataset=PEMS08 horizon=96 seed=2024 config_id=1a2b3c4d5e6f params=1234567 epoch_time=12.345 infer_time=1.234 mse=0.20000 mae=0.30000
 
 This script scans a log directory for those lines, groups them by
-(model, dataset, horizon), and reports the mean +/- std of each metric across
-seeds. Optionally writes the aggregated table to CSV.
+(model, dataset, horizon, config_id), keeps only the latest record for a repeated
+seed, and reports the mean +/- std of each metric across seeds. Optionally writes
+the aggregated table to CSV.
 
 Usage (from the repository root)::
 
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 RESULT_PREFIX = 'RESULT |'
-GROUP_KEYS = ('model', 'dataset', 'horizon')
+GROUP_KEYS = ('model', 'dataset', 'horizon', 'config_id')
 # Error metrics (5 decimals) and wall-clock timings (seconds, 3 decimals). Both
 # are averaged with mean +/- std across seeds; they differ only in formatting.
 ERROR_METRICS = ('mse', 'mae')
@@ -59,13 +60,17 @@ def collect_results(logs_dir: Path) -> list[dict[str, str]]:
 
 
 def aggregate(records: list[dict[str, str]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
-    for record in records:
+    groups: dict[tuple[str, ...], dict[str, dict[str, str]]] = defaultdict(dict)
+    for record_index, record in enumerate(records):
         key = tuple(record.get(k, '') for k in GROUP_KEYS)
-        groups[key].append(record)
+        # Logs are collected in timestamp-sorted path order, so assigning by seed
+        # makes a later rerun replace an earlier result for the same configuration.
+        seed_key = record.get('seed') or f'__record_{record_index}'
+        groups[key][seed_key] = record
 
     rows: list[dict[str, Any]] = []
-    for key, group in groups.items():
+    for key, records_by_seed in groups.items():
+        group = list(records_by_seed.values())
         row: dict[str, Any] = dict(zip(GROUP_KEYS, key))
         row['seeds'] = len(group)
 
@@ -87,7 +92,7 @@ def aggregate(records: list[dict[str, str]]) -> list[dict[str, Any]]:
     def sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
         horizon = row['horizon']
         horizon_num = int(horizon) if horizon.isdigit() else 0
-        return (row['model'], row['dataset'], horizon_num)
+        return (row['model'], row['dataset'], horizon_num, row['config_id'])
 
     return sorted(rows, key=sort_key)
 
@@ -104,6 +109,7 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         ('model', 12, '<'),
         ('dataset', 10, '<'),
         ('horizon', 8, '>'),
+        ('config_id', 14, '>'),
         ('seeds', 7, '>'),
         ('params', 14, '>'),
         ('MSE (mean+/-std)', AGG_W, '>'),
@@ -125,6 +131,7 @@ def print_table(rows: list[dict[str, Any]]) -> None:
             row['model'],
             row['dataset'],
             row['horizon'],
+            row['config_id'] or '-',
             row['seeds'],
             params,
             fmt_agg(row['mse_mean'], row['mse_std'], 5),
@@ -143,6 +150,7 @@ def write_csv(rows: list[dict[str, Any]], csv_path: Path) -> None:
         'model',
         'dataset',
         'horizon',
+        'config_id',
         'seeds',
         'params',
         'mse_mean',

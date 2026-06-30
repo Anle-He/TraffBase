@@ -31,14 +31,14 @@ The config path resolved from `MODEL`/`DATASET`/`HORIZON` must exist
 horizon listed in the script's `HORIZONS`. Logs are written to `logs/` and checkpoints to
 `checkpoints/`, both relative to the working directory, so always launch from the repo root.
 
-To run a single configuration directly, call `main.py` with the same flags shown above.
+For a direct run, use the package entry point from the repository root:
 
 Any config value can be overridden on the command line with repeatable
 `-o SECTION.key=value` flags, so you can try a value without editing the YAML
 (the value is parsed as YAML, so `0.0005` is a float, `True` a bool, etc.):
 
 ```bash
-python -u traffbase/main.py -m SMamba -d BJ500 \
+python -u -m traffbase.main -m SMamba -d BJ500 \
     -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml -sd 2024 \
     -o OPTIM.initial_lr=0.0005 -o MODEL_PARAM.d_model=256
 ```
@@ -55,7 +55,7 @@ validation metric** (test is never used to choose). The search space lives in
 Search cheaply (single seed, truncated epochs) on one horizon:
 
 ```bash
-python traffbase/tune.py -m SMamba -d BJ500 \
+python -m traffbase.tune -m SMamba -d BJ500 \
     -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml \
     --n-trials 20 --search-epochs 8
 ```
@@ -73,6 +73,24 @@ bash ./scripts/HPO/confirm.sh SMamba BJ500 \
 The test metrics for the confirmed setting are then aggregated across seeds the
 usual way (`python analysis/aggregate_results.py`) — searching only fixes the
 hyperparameter values, it does not change how the reported test result is obtained.
+
+The built-in Mamba model uses `hidden_dim` and `num_layers`; its search space and
+printed `-o` flags use those exact `MODEL_PARAM` names rather than the
+`d_model`/`e_layers` names used by SMamba and iTransformer.
+
+## Aggregating results
+
+Every `RESULT |` line includes a `config_id` derived from the effective YAML after
+CLI or HPO overrides. Run:
+
+```bash
+python analysis/aggregate_results.py
+```
+
+Results are grouped by model, dataset, horizon, and config ID, so different HPO
+trials or confirmed settings are not averaged together. If the same configuration
+and seed are rerun, only the latest log is included. Older logs without a config ID
+remain available under a legacy group.
 
 ## Data
 

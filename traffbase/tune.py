@@ -7,7 +7,7 @@ the **validation** metric returned by `run()` — test is never used to choose.
 
 Usage (from the repository root):
 
-    python traffbase/tune.py -m SMamba -d BJ500 \
+    python -m traffbase.tune -m SMamba -d BJ500 \
         -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml \
         --n-trials 20 --search-epochs 8
 
@@ -22,7 +22,7 @@ from typing import Any
 import optuna
 import torch
 
-from main import DEFAULT_DEVICE, load_config, run
+from traffbase.main import DEFAULT_DEVICE, load_config, run
 
 
 def suggest_params(trial: optuna.Trial, model_name: str) -> dict[str, Any]:
@@ -35,11 +35,16 @@ def suggest_params(trial: optuna.Trial, model_name: str) -> dict[str, Any]:
         'OPTIM.initial_lr': trial.suggest_float('initial_lr', 1e-4, 5e-3, log=True),
     }
 
-    if model_name in {'SMamba', 'Mamba', 'iTransformer'}:
+    if model_name in {'SMamba', 'iTransformer'}:
         params['MODEL_PARAM.d_model'] = trial.suggest_categorical('d_model', [128, 256, 512])
         params['MODEL_PARAM.e_layers'] = trial.suggest_int('e_layers', 2, 4)
-        if model_name in {'SMamba', 'Mamba'}:
+        if model_name == 'SMamba':
             params['MODEL_PARAM.d_state'] = trial.suggest_categorical('d_state', [16, 32, 64])
+    elif model_name == 'Mamba':
+        params['MODEL_PARAM.hidden_dim'] = trial.suggest_categorical(
+            'hidden_dim', [32, 64, 128]
+        )
+        params['MODEL_PARAM.num_layers'] = trial.suggest_int('num_layers', 2, 4)
     elif model_name == 'PatchTST':
         params['MODEL_PARAM.d_model'] = trial.suggest_categorical('d_model', [128, 256, 512])
         params['MODEL_PARAM.e_layers'] = trial.suggest_int('e_layers', 2, 4)
@@ -116,7 +121,7 @@ def main() -> None:
         for path, name in _override_flags(args.model_name, best.params)
     )
     print(
-        f'  python traffbase/main.py -m {args.model_name} -t {args.task_name} '
+        f'  python -m traffbase.main -m {args.model_name} -t {args.task_name} '
         f'-d {args.dataset_name} -cfg {args.config_path} -sd {args.seed} {overrides}'
     )
 
@@ -129,6 +134,8 @@ def _override_flags(model_name: str, params: dict[str, Any]) -> list[tuple[str, 
         'd_model': 'MODEL_PARAM.d_model',
         'e_layers': 'MODEL_PARAM.e_layers',
         'd_state': 'MODEL_PARAM.d_state',
+        'hidden_dim': 'MODEL_PARAM.hidden_dim',
+        'num_layers': 'MODEL_PARAM.num_layers',
         'dropout': 'MODEL_PARAM.dropout',
     }
     return [(name_to_path[name], name) for name in params if name in name_to_path]
