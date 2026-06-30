@@ -19,6 +19,7 @@ from traffbase.utils import (
     select_loss,
     banner,
     count_parameters,
+    compute_mse_mae,
     CustomJSONEncoder,
 )
 
@@ -40,7 +41,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('-d', '--dataset_name', type=str, default=DEFAULT_DATASET)
     parser.add_argument('-cfg', '--config_path', type=str, default=None)
     parser.add_argument('-sd', '--seed', type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        '-o',
+        '--override',
+        action='append',
+        default=[],
+        metavar='SECTION.key=value',
+        help=(
+            'Override a config value, e.g. -o OPTIM.initial_lr=0.0005 '
+            '-o MODEL_PARAM.d_model=256. Repeatable.'
+        ),
+    )
     return parser.parse_args()
+
+
+def apply_overrides(cfg: dict[str, Any], overrides: list[str]) -> None:
+    '''Apply `SECTION.key=value` overrides onto a loaded config in place.
+
+    The value is parsed with `yaml.safe_load`, so `0.0005` becomes a float,
+    `True` a bool, `3` an int, etc. — matching the types already in the YAML.
+    '''
+    for item in overrides:
+        path, sep, raw = item.partition('=')
+        if not sep:
+            raise ValueError(f'Malformed override (expected SECTION.key=value): {item!r}')
+        section, dot, key = path.partition('.')
+        if not dot:
+            raise ValueError(f'Override key must be SECTION.key, got: {path!r}')
+        if section not in cfg:
+            raise KeyError(f'Unknown config section in override: {section!r}')
+        cfg[section][key] = yaml.safe_load(raw)
 
 
 def set_random_seed(seed: int) -> None:
@@ -111,21 +141,27 @@ def create_lr_scheduler(
     return scheduler_map[scheduler_type]()
 
 
-def main() -> None:
-    install()
+def run(
+    model_name: str,
+    task_name: str,
+    dataset_name: str,
+    cfg: dict[str, Any],
+    seed: int,
+    device: torch.device,
+) -> dict[str, float]:
+    '''Train + evaluate one model on one config and return its metrics.
 
-    args = parse_args()
-
-    set_random_seed(args.seed)
-
-    device = torch.device(DEFAULT_DEVICE)
-
-    cfg = load_config(args.config_path)
+    This is the single source of truth for a single run, shared by the CLI
+    (`main`) and the hyperparameter search (`tune.py`). It reports test metrics
+    in the log but also returns `val_mse`/`val_mae` so callers that must avoid
+    test leakage (HPO) can select on validation.
+    '''
+    set_random_seed(seed)
 
     in_steps = cfg['DATA'].get('in_steps', 96)
     out_steps = cfg['DATA'].get('out_steps', 12)
 
-    model_arch = select_model(args.model_name)
+    model_arch = select_model(model_name)
     # seq_len_in/seq_len_out mirror DATA.in_steps/out_steps, so inject them from that
     # single source instead of duplicating the values in every MODEL_PARAM block.
     # The explicit keys override any stale copies left in MODEL_PARAM.
@@ -137,12 +173,12 @@ def main() -> None:
     model = model_arch(**model_args).to(device)
 
     run_time = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    log = create_log_file(args.model_name, args.task_name, args.dataset_name, run_time)
+    log = create_log_file(model_name, task_name, dataset_name, run_time)
 
-    print_log(f'Dataset used: {args.dataset_name.upper()}', log=log)
-    data_path = DATA_DIR / args.dataset_name
+    print_log(f'Dataset used: {dataset_name.upper()}', log=log)
+    data_path = DATA_DIR / dataset_name
     train_loader, val_loader, test_loader, scaler = select_dataloader(
-        args.task_name.upper()
+        task_name.upper()
     )(
         data_path,
         batch_size=cfg['GENERAL'].get('batch_size', 32),
@@ -157,7 +193,7 @@ def main() -> None:
     print_log(log=log)
 
     checkpoint_path = create_checkpoint_path(
-        args.model_name, args.task_name, args.dataset_name, run_time
+        model_name, task_name, dataset_name, run_time
     )
 
     criterion = select_loss(cfg['OPTIM'].get('loss', 'MSE'))(
@@ -174,11 +210,11 @@ def main() -> None:
     )
 
     trainer = select_trainer(cfg['GENERAL'].get('runner', 'LTSFTrainer'))(
-        cfg, device=device, scaler=scaler, log=log, seed=args.seed
+        cfg, device=device, scaler=scaler, log=log, seed=seed
     )
 
-    print_log(banner(args.model_name), log=log)
-    print_log(f'Random Seed = {args.seed}', log=log)
+    print_log(banner(model_name), log=log)
+    print_log(f'Random Seed = {seed}', log=log)
     print_log(
         json.dumps(cfg, ensure_ascii=False, indent=4, cls=CustomJSONEncoder), log=log
     )
@@ -213,19 +249,47 @@ def main() -> None:
         save=str(checkpoint_path),
     )
 
+    # Validation metrics for callers that must select without touching test
+    # (HPO). The model already holds the best (early-stopped) weights here.
+    val_mse, val_mae = compute_mse_mae(*trainer.predict(model, val_loader))
+
     metrics = trainer.test_model(model, test_loader)
 
     print_log(
-        f'RESULT | model={args.model_name} dataset={args.dataset_name.upper()} '
-        f'horizon={out_steps} seed={args.seed} '
+        f'RESULT | model={model_name} dataset={dataset_name.upper()} '
+        f'horizon={out_steps} seed={seed} '
         f'params={total_params} '
         f'epoch_time={trainer.epoch_time:.3f} infer_time={metrics["infer_time"]:.3f} '
+        f'val_mse={val_mse:.5f} val_mae={val_mae:.5f} '
         f'mse={metrics["clean_mse"]:.5f} mae={metrics["clean_mae"]:.5f}',
         log=log,
     )
 
     log.close()
     torch.cuda.empty_cache()
+
+    return {
+        'val_mse': val_mse,
+        'val_mae': val_mae,
+        'test_mse': metrics['clean_mse'],
+        'test_mae': metrics['clean_mae'],
+        'total_params': float(total_params),
+        'epoch_time': trainer.epoch_time,
+        'infer_time': metrics['infer_time'],
+    }
+
+
+def main() -> None:
+    install()
+
+    args = parse_args()
+
+    device = torch.device(DEFAULT_DEVICE)
+
+    cfg = load_config(args.config_path)
+    apply_overrides(cfg, args.override)
+
+    run(args.model_name, args.task_name, args.dataset_name, cfg, args.seed, device)
 
 
 if __name__ == '__main__':

@@ -33,6 +33,47 @@ horizon listed in the script's `HORIZONS`. Logs are written to `logs/` and check
 
 To run a single configuration directly, call `main.py` with the same flags shown above.
 
+Any config value can be overridden on the command line with repeatable
+`-o SECTION.key=value` flags, so you can try a value without editing the YAML
+(the value is parsed as YAML, so `0.0005` is a float, `True` a bool, etc.):
+
+```bash
+python -u traffbase/main.py -m SMamba -d BJ500 \
+    -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml -sd 2024 \
+    -o OPTIM.initial_lr=0.0005 -o MODEL_PARAM.d_model=256
+```
+
+## Hyperparameter search
+
+`traffbase/tune.py` is a lightweight search driver built on the same `run()` that
+`main.py` uses — it adds no machinery to the training loop. It loads a base config,
+lets [Optuna](https://optuna.org/) (`pip install optuna`) propose a few high-impact
+knobs, overrides them in the config, runs one training, and **selects on the
+validation metric** (test is never used to choose). The search space lives in
+`suggest_params` in `tune.py`; edit it per model.
+
+Search cheaply (single seed, truncated epochs) on one horizon:
+
+```bash
+python traffbase/tune.py -m SMamba -d BJ500 \
+    -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml \
+    --n-trials 20 --search-epochs 8
+```
+
+It prints the best trial's params and a ready-to-run command. Then confirm that
+setting across the full `HORIZONS x SEEDS` grid with full-length training, passing
+the `-o` flags through:
+
+```bash
+bash ./scripts/HPO/confirm.sh SMamba BJ500 \
+    -o OPTIM.initial_lr=0.000731 -o MODEL_PARAM.d_model=256 \
+    -o MODEL_PARAM.e_layers=3 -o MODEL_PARAM.d_state=32
+```
+
+The test metrics for the confirmed setting are then aggregated across seeds the
+usual way (`python analysis/aggregate_results.py`) — searching only fixes the
+hyperparameter values, it does not change how the reported test result is obtained.
+
 ## Data
 
 The processed datasets are versioned in this repository under
