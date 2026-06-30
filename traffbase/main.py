@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 import yaml
 import random
 import argparse
@@ -11,9 +12,9 @@ from rich.traceback import install
 
 import torch
 
-from models import select_model
-from trainers import select_trainer
-from data.get_dataloader import select_dataloader
+from traffbase.models import select_model
+from traffbase.trainers import select_trainer
+from traffbase.data.get_dataloader import select_dataloader
 from traffbase.utils import (
     print_log,
     select_loss,
@@ -89,6 +90,18 @@ def load_config(config_path: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def config_fingerprint(cfg: dict[str, Any]) -> str:
+    '''Return a stable short identifier for the effective run configuration.'''
+    payload = json.dumps(
+        cfg,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+        cls=CustomJSONEncoder,
+    )
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]
+
+
 def create_log_file(model_name: str, task_name: str, dataset_name: str, log_time: str) -> TextIO:
     log_dir = LOG_DIR / f'{model_name}_{dataset_name.upper()}'
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +173,7 @@ def run(
 
     in_steps = cfg['DATA'].get('in_steps', 96)
     out_steps = cfg['DATA'].get('out_steps', 12)
+    config_id = config_fingerprint(cfg)
 
     model_arch = select_model(model_name)
     # seq_len_in/seq_len_out mirror DATA.in_steps/out_steps, so inject them from that
@@ -257,7 +271,7 @@ def run(
 
     print_log(
         f'RESULT | model={model_name} dataset={dataset_name.upper()} '
-        f'horizon={out_steps} seed={seed} '
+        f'horizon={out_steps} seed={seed} config_id={config_id} '
         f'params={total_params} '
         f'epoch_time={trainer.epoch_time:.3f} infer_time={metrics["infer_time"]:.3f} '
         f'val_mse={val_mse:.5f} val_mae={val_mae:.5f} '
