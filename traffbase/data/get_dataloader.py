@@ -1,7 +1,6 @@
 import numpy as np
 from typing import Any
 from pathlib import Path
-from collections.abc import Callable
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -13,14 +12,6 @@ from traffbase.utils import print_log
 FEATURE_MAIN = 0
 FEATURE_TOD = 1
 FEATURE_DOW = 2
-
-
-def select_dataloader(task: str) -> Callable:
-    task_upper = task.upper()
-    if task_upper == 'LTSF':
-        return build_LTSF_dataloader
-    else:
-        raise ValueError(f'{task} dataloader has not been implemented yet')
 
 
 def _build_features(tod: bool, dow: bool) -> list[int]:

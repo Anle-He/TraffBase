@@ -8,8 +8,8 @@ the **validation** metric returned by `run()` — test is never used to choose.
 Usage (from the repository root):
 
     python -m traffbase.tune -m SMamba -d BJ500 \
-        -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml \
-        --n-trials 20 --search-epochs 8
+        -cfg traffbase/models/SMamba/configs/BJ500.yaml \
+        -o DATA.out_steps=96 --n-trials 20 --search-epochs 8
 
 The search space lives in `suggest_params` below — edit it per model. Only a
 few high-impact knobs are tuned; everything else stays at the config default.
@@ -22,7 +22,7 @@ from typing import Any
 import optuna
 import torch
 
-from traffbase.main import DEFAULT_DEVICE, load_config, run
+from traffbase.main import DEFAULT_DEVICE, apply_overrides, load_config, run
 
 
 def suggest_params(trial: optuna.Trial, model_name: str) -> dict[str, Any]:
@@ -32,26 +32,42 @@ def suggest_params(trial: optuna.Trial, model_name: str) -> dict[str, Any]:
     `initial_lr` is the universal lever; add a couple of model-specific ones.
     '''
     params: dict[str, Any] = {
-        'OPTIM.initial_lr': trial.suggest_float('initial_lr', 1e-4, 5e-3, log=True),
+        'OPTIM.initial_lr': trial.suggest_float(
+            'OPTIM.initial_lr', 1e-4, 5e-3, log=True
+        ),
     }
 
     if model_name in {'SMamba', 'iTransformer'}:
-        params['MODEL_PARAM.d_model'] = trial.suggest_categorical('d_model', [128, 256, 512])
-        params['MODEL_PARAM.e_layers'] = trial.suggest_int('e_layers', 2, 4)
+        params['MODEL_PARAM.d_model'] = trial.suggest_categorical(
+            'MODEL_PARAM.d_model', [128, 256, 512]
+        )
+        params['MODEL_PARAM.e_layers'] = trial.suggest_int(
+            'MODEL_PARAM.e_layers', 2, 4
+        )
         if model_name == 'SMamba':
-            params['MODEL_PARAM.d_state'] = trial.suggest_categorical('d_state', [16, 32, 64])
+            params['MODEL_PARAM.d_state'] = trial.suggest_categorical(
+                'MODEL_PARAM.d_state', [16, 32, 64]
+            )
     elif model_name == 'Mamba':
         params['MODEL_PARAM.hidden_dim'] = trial.suggest_categorical(
-            'hidden_dim', [32, 64, 128]
+            'MODEL_PARAM.hidden_dim', [32, 64, 128]
         )
-        params['MODEL_PARAM.num_layers'] = trial.suggest_int('num_layers', 2, 4)
+        params['MODEL_PARAM.num_layers'] = trial.suggest_int(
+            'MODEL_PARAM.num_layers', 2, 4
+        )
     elif model_name == 'PatchTST':
-        params['MODEL_PARAM.d_model'] = trial.suggest_categorical('d_model', [128, 256, 512])
-        params['MODEL_PARAM.e_layers'] = trial.suggest_int('e_layers', 2, 4)
-        params['MODEL_PARAM.dropout'] = trial.suggest_float('dropout', 0.0, 0.3, step=0.1)
+        params['MODEL_PARAM.d_model'] = trial.suggest_categorical(
+            'MODEL_PARAM.d_model', [128, 256, 512]
+        )
+        params['MODEL_PARAM.e_layers'] = trial.suggest_int(
+            'MODEL_PARAM.e_layers', 2, 4
+        )
+        params['MODEL_PARAM.dropout'] = trial.suggest_float(
+            'MODEL_PARAM.dropout', 0.0, 0.3, step=0.1
+        )
     elif model_name in {'DLinear', 'CycleNet', 'FilterNet', 'Amplifier'}:
         params['OPTIM.lr_scheduler_gamma'] = trial.suggest_categorical(
-            'lr_scheduler_gamma', [0.3, 0.5, 0.7, 0.9]
+            'OPTIM.lr_scheduler_gamma', [0.3, 0.5, 0.7, 0.9]
         )
     # else: only initial_lr is tuned — extend this function for other models.
 
@@ -65,6 +81,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('-d', '--dataset_name', type=str, required=True)
     parser.add_argument('-cfg', '--config_path', type=str, required=True)
     parser.add_argument('-sd', '--seed', type=int, default=2024)
+    parser.add_argument(
+        '-o',
+        '--override',
+        action='append',
+        default=[],
+        metavar='SECTION.key=value',
+        help='Override a base config value before applying trial parameters.',
+    )
     parser.add_argument('--n-trials', type=int, default=20)
     parser.add_argument(
         '--search-epochs',
@@ -79,6 +103,7 @@ def main() -> None:
     args = parse_args()
     device = torch.device(DEFAULT_DEVICE)
     base_cfg = load_config(args.config_path)
+    apply_overrides(base_cfg, args.override)
 
     def objective(trial: optuna.Trial) -> float:
         cfg = copy.deepcopy(base_cfg)
@@ -116,29 +141,26 @@ def main() -> None:
     for key, value in best.params.items():
         print(f'  {key} = {value}')
     print('\nReproduce / confirm with full seeds via:')
-    overrides = ' '.join(
-        f'-o {path}={best.params[name]}'
-        for path, name in _override_flags(args.model_name, best.params)
-    )
-    print(
-        f'  python -m traffbase.main -m {args.model_name} -t {args.task_name} '
-        f'-d {args.dataset_name} -cfg {args.config_path} -sd {args.seed} {overrides}'
-    )
-
-
-def _override_flags(model_name: str, params: dict[str, Any]) -> list[tuple[str, str]]:
-    '''Map Optuna param names back to their `SECTION.key` config paths.'''
-    name_to_path = {
-        'initial_lr': 'OPTIM.initial_lr',
-        'lr_scheduler_gamma': 'OPTIM.lr_scheduler_gamma',
-        'd_model': 'MODEL_PARAM.d_model',
-        'e_layers': 'MODEL_PARAM.e_layers',
-        'd_state': 'MODEL_PARAM.d_state',
-        'hidden_dim': 'MODEL_PARAM.hidden_dim',
-        'num_layers': 'MODEL_PARAM.num_layers',
-        'dropout': 'MODEL_PARAM.dropout',
-    }
-    return [(name_to_path[name], name) for name in params if name in name_to_path]
+    command = [
+        'python',
+        '-m',
+        'traffbase.main',
+        '-m',
+        args.model_name,
+        '-t',
+        args.task_name,
+        '-d',
+        args.dataset_name,
+        '-cfg',
+        args.config_path,
+        '-sd',
+        str(args.seed),
+    ]
+    for item in args.override:
+        command.extend(['-o', item])
+    for path, value in best.params.items():
+        command.extend(['-o', f'{path}={value}'])
+    print('  ' + ' '.join(command))
 
 
 if __name__ == '__main__':

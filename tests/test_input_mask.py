@@ -133,7 +133,7 @@ class LTSFTrainerMaskFlowTests(unittest.TestCase):
             trainer.predict_calls,
             [(None, None), (3, 2024), (3, 2025), (3, 2026)],
         )
-        self.assertIn('Clean All Steps', log.getvalue())
+        self.assertIn('Clean', log.getvalue())
         self.assertIn('Masked summary', log.getvalue())
 
     def test_disabled_mask_only_runs_clean_evaluation(self) -> None:
@@ -148,6 +148,69 @@ class LTSFTrainerMaskFlowTests(unittest.TestCase):
         trainer.test_model(self._Model(), loader)
 
         self.assertEqual(trainer.predict_calls, [(None, None)])
+
+
+class LTSFTrainerFitMetricsTests(unittest.TestCase):
+    class _RecordingTrainer(LTSFTrainer):
+        def __init__(self, log_fit_metrics: bool) -> None:
+            super().__init__(
+                cfg={
+                    'GENERAL': {'log_fit_metrics': log_fit_metrics},
+                    'OPTIM': {},
+                },
+                device=torch.device('cpu'),
+                scaler=None,
+                log=io.StringIO(),
+            )
+            self.predict_loaders: list[object] = []
+
+        def train_one_epoch(
+            self, model, train_loader, optimizer, scheduler, criterion
+        ) -> float:
+            return 0.5
+
+        def eval_model(self, model, val_loader, criterion) -> float:
+            return 0.25
+
+        def predict(
+            self,
+            model,
+            loader,
+            input_mask_steps: int | None = None,
+            mask_seed: int | None = None,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            self.predict_loaders.append(loader)
+            y_true = np.ones((2, 2, 1, 1), dtype=np.float32)
+            return y_true, y_true.copy()
+
+    def _train(self, log_fit_metrics: bool) -> tuple[float, float]:
+        trainer = self._RecordingTrainer(log_fit_metrics)
+        train_loader = object()
+        val_loader = object()
+        model = torch.nn.Linear(1, 1)
+
+        _, val_mse, val_mae = trainer.train_model(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=None,
+            scheduler=None,
+            criterion=None,
+            max_epochs=1,
+            save=None,
+        )
+
+        expected_loaders = (
+            [train_loader, val_loader] if log_fit_metrics else [val_loader]
+        )
+        self.assertEqual(trainer.predict_loaders, expected_loaders)
+        return val_mse, val_mae
+
+    def test_validation_metrics_are_computed_once_without_fit_logging(self) -> None:
+        self.assertEqual(self._train(log_fit_metrics=False), (0.0, 0.0))
+
+    def test_fit_logging_reuses_validation_metrics(self) -> None:
+        self.assertEqual(self._train(log_fit_metrics=True), (0.0, 0.0))
 
 
 if __name__ == '__main__':

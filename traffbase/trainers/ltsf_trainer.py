@@ -8,7 +8,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchinfo import summary
 
-from .base_trainer import BaseTrainer
 from traffbase.input_mask import (
     apply_random_time_mask,
     resolve_input_mask_settings,
@@ -16,7 +15,7 @@ from traffbase.input_mask import (
 from traffbase.utils import compute_mse_mae, print_log, banner, StandardScaler
 
 
-class LTSFTrainer(BaseTrainer):
+class LTSFTrainer:
     def __init__(
         self,
         cfg: dict[str, Any],
@@ -25,8 +24,6 @@ class LTSFTrainer(BaseTrainer):
         log: TextIO | None = None,
         seed: int = 2024,
     ) -> None:
-        super().__init__()
-
         self.cfg = cfg
         self.device = device
         # Retained for API symmetry with the runner/dataloader and possible future
@@ -194,7 +191,7 @@ class LTSFTrainer(BaseTrainer):
         early_stop_patience: int = 3,
         verbose: int = 1,
         save: str | None = None,
-    ) -> nn.Module:
+    ) -> tuple[nn.Module, float, float]:
         if max_epochs <= 0:
             raise ValueError('max_epochs must be greater than 0')
 
@@ -265,7 +262,8 @@ class LTSFTrainer(BaseTrainer):
         print_log(f'{"Epoch":<11}: {best_epoch + 1}/{completed_epochs}', log=self.log)
         if self.log_fit_metrics:
             train_mse, train_mae = compute_mse_mae(*self.predict(model, train_loader))
-            val_mse, val_mae = compute_mse_mae(*self.predict(model, val_loader))
+        val_mse, val_mae = compute_mse_mae(*self.predict(model, val_loader))
+        if self.log_fit_metrics:
             print_log(
                 f'{"Train":<11}: Loss = {train_loss_best:.5f}   '
                 f'MSE = {train_mse:.5f}   MAE = {train_mae:.5f}',
@@ -285,7 +283,7 @@ class LTSFTrainer(BaseTrainer):
             log=self.log,
         )
 
-        return model
+        return model, val_mse, val_mae
 
     @torch.inference_mode()
     def test_model(self, model: nn.Module, test_loader: DataLoader) -> dict[str, float]:

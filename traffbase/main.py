@@ -13,14 +13,13 @@ from rich.traceback import install
 import torch
 
 from traffbase.models import select_model
-from traffbase.trainers import select_trainer
-from traffbase.data.get_dataloader import select_dataloader
+from traffbase.trainers import LTSFTrainer
+from traffbase.data.get_dataloader import build_LTSF_dataloader
 from traffbase.utils import (
     print_log,
     select_loss,
     banner,
     count_parameters,
-    compute_mse_mae,
     CustomJSONEncoder,
 )
 
@@ -126,32 +125,27 @@ def create_checkpoint_path(model_name: str, task_name: str, dataset_name: str, l
     )
 
 
-def create_lr_scheduler(
-    optimizer: torch.optim.Optimizer,
-    scheduler_type: str,
-    cfg: dict[str, Any],
-    train_loader_len: int,
-) -> torch.optim.lr_scheduler._LRScheduler:
+def _validate_runtime_selection(task_name: str, cfg: dict[str, Any]) -> None:
+    '''Validate the retained compatibility fields for the LTSF-only pipeline.'''
 
-    scheduler_map = {
-        'ExponentialLR': lambda: torch.optim.lr_scheduler.ExponentialLR(
-            optimizer, gamma=cfg.get('lr_scheduler_gamma', 0.5)
-        ),
-        # 'OneCycleLR': lambda: torch.optim.lr_scheduler.OneCycleLR(
-        #     optimizer,
-        #     steps_per_epoch=train_loader_len,
-        #     max_lr=cfg['OPTIM'].get('initial_lr'),
-        #     epochs=cfg['GENERAL'].get('max_epochs'),
-        #     pct_start=cfg['OPTIM'].get('lr_scheduler_pct_start', 0.3),
-        # ),
-        # 'MultiStepLR': lambda: torch.optim.lr_scheduler.MultiStepLR(
-        #     optimizer,
-        #     milestones=cfg.get('milestones', []),
-        #     gamma=cfg.get('lr_decay_rate', 0.1),
-        # ),
-    }
+    if task_name.upper() != 'LTSF':
+        raise ValueError(
+            f'Unknown task {task_name!r}. TraffBase currently supports only LTSF.'
+        )
 
-    return scheduler_map[scheduler_type]()
+    runner = cfg['GENERAL'].get('runner', 'LTSFTrainer')
+    if runner != 'LTSFTrainer':
+        raise ValueError(
+            f'Unknown runner {runner!r}. TraffBase currently supports only '
+            'LTSFTrainer.'
+        )
+
+    scheduler_type = cfg['OPTIM'].get('lr_scheduler_type', 'ExponentialLR')
+    if scheduler_type != 'ExponentialLR':
+        raise ValueError(
+            f'Unknown lr_scheduler_type {scheduler_type!r}. TraffBase currently '
+            'supports only ExponentialLR.'
+        )
 
 
 def run(
@@ -169,6 +163,7 @@ def run(
     in the log but also returns `val_mse`/`val_mae` so callers that must avoid
     test leakage (HPO) can select on validation.
     '''
+    _validate_runtime_selection(task_name, cfg)
     set_random_seed(seed)
 
     in_steps = cfg['DATA'].get('in_steps', 96)
@@ -191,9 +186,7 @@ def run(
 
     print_log(f'Dataset used: {dataset_name.upper()}', log=log)
     data_path = DATA_DIR / dataset_name
-    train_loader, val_loader, test_loader, scaler = select_dataloader(
-        task_name.upper()
-    )(
+    train_loader, val_loader, test_loader, scaler = build_LTSF_dataloader(
         data_path,
         batch_size=cfg['GENERAL'].get('batch_size', 32),
         in_steps=in_steps,
@@ -218,12 +211,12 @@ def run(
         model.parameters(), lr=cfg['OPTIM'].get('initial_lr', 1e-3)
     )
 
-    lr_scheduler_type = cfg['OPTIM'].get('lr_scheduler_type', 'ExponentialLR')
-    scheduler = create_lr_scheduler(
-        optimizer, lr_scheduler_type, cfg['OPTIM'], len(train_loader)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        optimizer,
+        gamma=cfg['OPTIM'].get('lr_scheduler_gamma', 0.5),
     )
 
-    trainer = select_trainer(cfg['GENERAL'].get('runner', 'LTSFTrainer'))(
+    trainer = LTSFTrainer(
         cfg, device=device, scaler=scaler, log=log, seed=seed
     )
 
@@ -250,7 +243,7 @@ def run(
 
     print_log(f'Checkpoints saved at: {checkpoint_path}', log=log)
     print_log(log=log)
-    model = trainer.train_model(
+    model, val_mse, val_mae = trainer.train_model(
         model,
         train_loader,
         val_loader,
@@ -262,10 +255,6 @@ def run(
         verbose=1,
         save=str(checkpoint_path),
     )
-
-    # Validation metrics for callers that must select without touching test
-    # (HPO). The model already holds the best (early-stopped) weights here.
-    val_mse, val_mae = compute_mse_mae(*trainer.predict(model, val_loader))
 
     metrics = trainer.test_model(model, test_loader)
 

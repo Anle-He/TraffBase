@@ -5,8 +5,8 @@ TraffBase is a personal research library for deep learning-based traffic time se
 ## Running experiments
 
 Experiments are launched through shell scripts under `scripts/<DATASET>/<model>.sh`. Each
-script sweeps over forecast horizons and random seeds, invoking `traffbase/main.py` once per
-combination with the matching YAML config.
+thin launcher sets its forecast horizons and random seeds, then delegates the grid to
+`scripts/run_grid.sh`.
 
 Run from the repository root:
 
@@ -14,22 +14,22 @@ Run from the repository root:
 bash ./scripts/BJ500/smamba.sh
 ```
 
-A launcher script sets `MODEL`, `TASK`, `DATASET`, `HORIZONS`, and `SEEDS`, then for each
-`(HORIZON, SEED)` pair calls:
+A launcher selects `MODEL`, `DATASET`, `HORIZONS`, and `SEEDS`. For each
+`(HORIZON, SEED)` pair the shared grid runner calls:
 
 ```bash
-python -u traffbase/main.py \
+python -u -m traffbase.main \
     -m $MODEL \
-    -t $TASK \
     -d $DATASET \
-    -cfg traffbase/models/$MODEL/configs/${DATASET}_IN96_OUT${HORIZON}.yaml \
-    -sd $SEED
+    -cfg traffbase/models/$MODEL/configs/${DATASET}.yaml \
+    -sd $SEED \
+    -o DATA.out_steps=$HORIZON
 ```
 
-The config path resolved from `MODEL`/`DATASET`/`HORIZON` must exist
-(`traffbase/models/<MODEL>/configs/<DATASET>_IN96_OUT<HORIZON>.yaml`); add a config for every
-horizon listed in the script's `HORIZONS`. Logs are written to `logs/` and checkpoints to
-`checkpoints/`, both relative to the working directory, so always launch from the repo root.
+Each model-dataset pair has one base config at
+`traffbase/models/<MODEL>/configs/<DATASET>.yaml`; the horizon is an override, so it does not
+require another copy of the config. Logs are written to `logs/` and checkpoints to
+`checkpoints/`, both relative to the repository root.
 
 For a direct run, use the package entry point from the repository root:
 
@@ -39,8 +39,9 @@ Any config value can be overridden on the command line with repeatable
 
 ```bash
 python -u -m traffbase.main -m SMamba -d BJ500 \
-    -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml -sd 2024 \
-    -o OPTIM.initial_lr=0.0005 -o MODEL_PARAM.d_model=256
+    -cfg traffbase/models/SMamba/configs/BJ500.yaml -sd 2024 \
+    -o DATA.out_steps=96 -o OPTIM.initial_lr=0.0005 \
+    -o MODEL_PARAM.d_model=256
 ```
 
 ## Hyperparameter search
@@ -56,8 +57,8 @@ Search cheaply (single seed, truncated epochs) on one horizon:
 
 ```bash
 python -m traffbase.tune -m SMamba -d BJ500 \
-    -cfg traffbase/models/SMamba/configs/BJ500_IN96_OUT96.yaml \
-    --n-trials 20 --search-epochs 8
+    -cfg traffbase/models/SMamba/configs/BJ500.yaml \
+    -o DATA.out_steps=96 --n-trials 20 --search-epochs 8
 ```
 
 It prints the best trial's params and a ready-to-run command. Then confirm that
@@ -127,8 +128,9 @@ model needs it (see `CycleNet`). `seq_len_in`/`seq_len_out` are injected from
 `DATA.in_steps`/`out_steps`, so declare them as the first two args fields but do **not** put
 them in `MODEL_PARAM`.
 
-Finally, register the class in `select_model` (`traffbase/models/__init__.py`), add a config
-per horizon under `traffbase/models/<Name>/configs/`, and a launcher in `scripts/<DATASET>/`.
+Finally, register the class in `select_model` (`traffbase/models/__init__.py`), add one base
+config per dataset under `traffbase/models/<Name>/configs/`, and a launcher in
+`scripts/<DATASET>/`.
 See `AGENTS.md` for the full conventions (config keys such as `num_nodes`, `use_*` flags, etc.).
 
 ## Test-time input masking

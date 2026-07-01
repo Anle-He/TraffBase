@@ -2,14 +2,14 @@
 GENERAL:
   runner: 'LTSFTrainer'
   batch_size: 32
-  max_epochs: 20
-  early_stop_patience: 5
+  max_epochs: 10
+  early_stop_patience: 3
 
 
 # --------- Data Configs ---------
 DATA:
   in_steps: 96
-  out_steps: 24
+  out_steps: 12
   x_time_of_day: False
   x_day_of_week: False
   y_time_of_day: False
@@ -20,9 +20,9 @@ DATA:
 TEST:
   input_mask:
     enabled: False
-    ratio: 0.10
-    steps: null
-    repeats: 3
+    ratio: null
+    steps: 24
+    repeats: 1
 
 
 # --------- Training Configs ---------
@@ -37,5 +37,16 @@ OPTIM:
 # --------- Model Configs ---------
 MODEL_PARAM:
   num_nodes: 170
-  hidden_dim: 64
-  num_layers: 3
+  d_model: 512
+  d_ff: 512
+  use_revin: False
+  dropout: 0.1
+  std_kernel: 25
+  e_layers: 2
+  d_state: 32
+  d_conv: 2
+  expand: 1
+  activation: 'gelu'
+  ds_type: 'avg'
+  ds_layers: 3
+  ds_window: 2
