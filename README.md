@@ -14,7 +14,15 @@ Run from the repository root:
 bash ./scripts/BJ500/smamba.sh
 ```
 
-A launcher selects `MODEL`, `DATASET`, `HORIZONS`, and `SEEDS`. For each
+For an ad-hoc grid without a dataset/model wrapper, call the shared runner directly;
+`HORIZONS` and `SEEDS` are optional space-separated overrides:
+
+```bash
+HORIZONS='12 24' SEEDS='2024' \
+    bash ./scripts/run_grid.sh SMamba BJ500 -o OPTIM.initial_lr=0.0005
+```
+
+A named launcher selects `MODEL`, `DATASET`, `HORIZONS`, and `SEEDS`. For each
 `(HORIZON, SEED)` pair the shared grid runner calls:
 
 ```bash
@@ -33,9 +41,11 @@ require another copy of the config. Logs are written to `logs/` and checkpoints 
 
 For a direct run, use the package entry point from the repository root:
 
-Any config value can be overridden on the command line with repeatable
-`-o SECTION.key=value` flags, so you can try a value without editing the YAML
-(the value is parsed as YAML, so `0.0005` is a float, `True` a bool, etc.):
+Any direct key within a config section can be overridden on the command line with
+repeatable `-o SECTION.key=value` flags, so you can try a value without editing the
+YAML. Values are parsed with `yaml.safe_load`, so `0.0005` is a float, `True` a bool,
+etc. Nested mappings are not traversed; edit the YAML for values such as
+`TEST.input_mask.enabled`.
 
 ```bash
 python -u -m traffbase.main -m SMamba -d BJ500 \
@@ -128,9 +138,10 @@ model needs it (see `CycleNet`). `seq_len_in`/`seq_len_out` are injected from
 `DATA.in_steps`/`out_steps`, so declare them as the first two args fields but do **not** put
 them in `MODEL_PARAM`.
 
-Finally, register the class in `select_model` (`traffbase/models/__init__.py`), add one base
-config per dataset under `traffbase/models/<Name>/configs/`, and a launcher in
-`scripts/<DATASET>/`.
+Finally, register the class in `select_model` (`traffbase/models/__init__.py`) and add one
+base config per dataset under `traffbase/models/<Name>/configs/`. Add a thin launcher under
+`scripts/<DATASET>/` when the model needs a checked-in horizon/seed grid; otherwise invoke
+`scripts/run_grid.sh` directly.
 See `AGENTS.md` for the full conventions (config keys such as `num_nodes`, `use_*` flags, etc.).
 
 ## Test-time input masking
@@ -148,5 +159,6 @@ TEST:
 ```
 
 Set exactly one of `ratio` or `steps`. For every test sample, the selected time steps
-are set to zero for all nodes. The clean test result is reported first, followed by
-the masked mean, standard deviation, and degradation relative to clean input.
+are set to zero across all nodes and input channels, including enabled time covariates.
+The clean test result is reported first, followed by the masked mean, standard deviation,
+and degradation relative to clean input.
