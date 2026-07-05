@@ -77,7 +77,6 @@ def suggest_params(trial: optuna.Trial, model_name: str) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--model_name', type=str, required=True)
-    parser.add_argument('-t', '--task_name', type=str, default='LTSF')
     parser.add_argument('-d', '--dataset_name', type=str, required=True)
     parser.add_argument('-cfg', '--config_path', type=str, required=True)
     parser.add_argument('-sd', '--seed', type=int, default=2024)
@@ -115,13 +114,15 @@ def main() -> None:
             section, key = path.split('.', 1)
             cfg[section][key] = value
 
+        # Trials only need the returned metrics; skip writing checkpoints that
+        # would never be loaded again.
         metrics = run(
             args.model_name,
-            args.task_name,
             args.dataset_name,
             cfg,
             args.seed,
             device,
+            save_checkpoint=False,
         )
         # Stash test metrics for the report, but optimize on validation only.
         trial.set_user_attr('test_mse', metrics['test_mse'])
@@ -147,8 +148,6 @@ def main() -> None:
         'traffbase.main',
         '-m',
         args.model_name,
-        '-t',
-        args.task_name,
         '-d',
         args.dataset_name,
         '-cfg',

@@ -67,9 +67,14 @@ def resolve_input_mask_settings(
 
 
 def apply_random_time_mask(
-    inputs: torch.Tensor, steps: int, seed: int
+    inputs: torch.Tensor, steps: int, generator: torch.Generator
 ) -> torch.Tensor:
-    '''Mask shared time steps across all nodes for each sample.'''
+    '''Mask shared time steps across all nodes for each sample.
+
+    Random draws are consumed row by row from ``generator``, so with a fixed
+    sequence length the mask of the i-th sample of a pass depends only on the
+    generator seed and i — not on how samples are batched.
+    '''
 
     if inputs.ndim < 3:
         raise ValueError('inputs must have shape [batch, time, ...]')
@@ -78,21 +83,14 @@ def apply_random_time_mask(
     if not 1 <= steps <= sequence_length:
         raise ValueError('steps must be between 1 and the input sequence length')
 
-    time_mask = torch.zeros(
-        batch_size,
-        sequence_length,
-        dtype=torch.bool,
-        device='cpu',
+    scores = torch.rand(
+        batch_size, sequence_length, generator=generator, device='cpu'
     )
-    generator = torch.Generator(device='cpu')
-    for sample_index in range(batch_size):
-        generator.manual_seed(seed + sample_index)
-        masked_indices = torch.randperm(
-            sequence_length,
-            generator=generator,
-            device='cpu',
-        )[:steps]
-        time_mask[sample_index, masked_indices] = True
+    masked_indices = scores.topk(steps, dim=1).indices
+    time_mask = torch.zeros(
+        batch_size, sequence_length, dtype=torch.bool, device='cpu'
+    )
+    time_mask.scatter_(1, masked_indices, True)
 
     masked_inputs = inputs.clone()
     broadcast_shape = (batch_size, sequence_length) + (1,) * (inputs.ndim - 2)

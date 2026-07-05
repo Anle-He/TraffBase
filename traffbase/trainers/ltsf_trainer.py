@@ -12,7 +12,7 @@ from traffbase.input_mask import (
     apply_random_time_mask,
     resolve_input_mask_settings,
 )
-from traffbase.utils import compute_mse_mae, print_log, banner, StandardScaler
+from traffbase.utils import compute_mse_mae, print_log, banner
 
 
 class LTSFTrainer:
@@ -20,16 +20,11 @@ class LTSFTrainer:
         self,
         cfg: dict[str, Any],
         device: torch.device,
-        scaler: StandardScaler,
         log: TextIO | None = None,
         seed: int = 2024,
     ) -> None:
         self.cfg = cfg
         self.device = device
-        # Retained for API symmetry with the runner/dataloader and possible future
-        # inverse scaling. Metrics are computed on the normalized scale, so the
-        # trainer itself never inverts (see AGENTS.md); this field is currently unused.
-        self.scaler = scaler
         self.log = log
         self.seed = seed
 
@@ -152,18 +147,22 @@ class LTSFTrainer:
                 'input_mask_steps and mask_seed must be provided together'
             )
 
+        mask_generator: torch.Generator | None = None
+        if mask_seed is not None:
+            mask_generator = torch.Generator(device='cpu')
+            mask_generator.manual_seed(mask_seed)
+
         y_list = []
         out_list = []
 
         for x_batch, y_batch in loader:
             x_batch = x_batch.float()
-            if input_mask_steps is not None and mask_seed is not None:
+            if input_mask_steps is not None and mask_generator is not None:
                 x_batch = apply_random_time_mask(
                     x_batch,
                     steps=input_mask_steps,
-                    seed=mask_seed,
+                    generator=mask_generator,
                 )
-                mask_seed += x_batch.size(0)
 
             x_batch = x_batch.to(self.device, non_blocking=True)
             y_batch = y_batch.float().to(self.device, non_blocking=True)
