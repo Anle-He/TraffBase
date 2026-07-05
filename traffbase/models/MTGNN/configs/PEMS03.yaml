@@ -1,6 +1,5 @@
 # --------- General Configs ---------
 GENERAL:
-  runner: 'LTSFTrainer'
   batch_size: 32
   max_epochs: 10
   early_stop_patience: 3
@@ -29,7 +28,6 @@ TEST:
 OPTIM:
   loss: 'MSE'
   initial_lr: 0.001
-  lr_scheduler_type: 'ExponentialLR'
   lr_scheduler_gamma: 0.5
   clip_grad: 5.0
 

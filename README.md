@@ -63,7 +63,8 @@ knobs, overrides them in the config, runs one training, and **selects on the
 validation metric** (test is never used to choose). The search space lives in
 `suggest_params` in `tune.py`; edit it per model.
 
-Search cheaply (single seed, truncated epochs) on one horizon:
+Search cheaply (single seed, truncated epochs) on one horizon; trials do not
+write checkpoints — only the confirmed runs below do:
 
 ```bash
 python -m traffbase.tune -m SMamba -d BJ500 \
@@ -72,11 +73,11 @@ python -m traffbase.tune -m SMamba -d BJ500 \
 ```
 
 It prints the best trial's params and a ready-to-run command. Then confirm that
-setting across the full `HORIZONS x SEEDS` grid with full-length training, passing
-the `-o` flags through:
+setting with full-length training via the shared grid runner, whose defaults are
+already the full `HORIZONS x SEEDS` grid, passing the `-o` flags through:
 
 ```bash
-bash ./scripts/HPO/confirm.sh SMamba BJ500 \
+bash ./scripts/run_grid.sh SMamba BJ500 \
     -o OPTIM.initial_lr=0.000731 -o MODEL_PARAM.d_model=256 \
     -o MODEL_PARAM.e_layers=3 -o MODEL_PARAM.d_state=32
 ```
@@ -92,7 +93,9 @@ printed `-o` flags use those exact `MODEL_PARAM` names rather than the
 ## Aggregating results
 
 Every `RESULT |` line includes a `config_id` derived from the effective YAML after
-CLI or HPO overrides. Run:
+CLI or HPO overrides. The `TEST` section is excluded from the fingerprint: it only
+affects test-time evaluation, so enabling e.g. the input mask does not split
+otherwise identical runs into separate groups. Run:
 
 ```bash
 python analysis/aggregate_results.py
@@ -161,4 +164,6 @@ TEST:
 Set exactly one of `ratio` or `steps`. For every test sample, the selected time steps
 are set to zero across all nodes and input channels, including enabled time covariates.
 The clean test result is reported first, followed by the masked mean, standard deviation,
-and degradation relative to clean input.
+and degradation relative to clean input. The masked mean is also appended to the
+`RESULT |` line as `masked_mse`/`masked_mae`, so `analysis/aggregate_results.py`
+aggregates it across seeds alongside the clean metrics.

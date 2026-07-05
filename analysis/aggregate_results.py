@@ -2,12 +2,13 @@
 
 Each run appends one line of the form::
 
-    RESULT | model=SMamba dataset=PEMS08 horizon=96 seed=2024 config_id=1a2b3c4d5e6f params=1234567 epoch_time=12.345 infer_time=1.234 mse=0.20000 mae=0.30000
+    RESULT | model=SMamba dataset=PEMS08 horizon=96 seed=2024 config_id=1a2b3c4d5e6f params=1234567 epoch_time=12.345 infer_time=1.234 val_mse=0.25000 val_mae=0.32000 mse=0.20000 mae=0.30000
 
-This script scans a log directory for those lines, groups them by
-(model, dataset, horizon, config_id), keeps only the latest record for a repeated
-seed, and reports the mean +/- std of each metric across seeds. Optionally writes
-the aggregated table to CSV.
+with optional trailing ``masked_mse=... masked_mae=...`` when the input-mask
+evaluation ran. This script scans a log directory for those lines, groups them
+by (model, dataset, horizon, config_id), keeps only the latest record for a
+repeated seed, and reports the mean +/- std of each metric across seeds.
+Optionally writes the aggregated table to CSV.
 
 Usage (from the repository root)::
 
@@ -17,6 +18,7 @@ Usage (from the repository root)::
 
 import argparse
 import csv
+import math
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -24,9 +26,10 @@ from typing import Any
 
 RESULT_PREFIX = 'RESULT |'
 GROUP_KEYS = ('model', 'dataset', 'horizon', 'config_id')
-# Error metrics (5 decimals) and wall-clock timings (seconds, 3 decimals). Both
+# Error metrics (5 decimals) and wall-clock timings (seconds, 3 decimals). All
 # are averaged with mean +/- std across seeds; they differ only in formatting.
-ERROR_METRICS = ('mse', 'mae')
+# Masked metrics are optional per record; their aggregates are NaN when absent.
+ERROR_METRICS = ('mse', 'mae', 'masked_mse', 'masked_mae')
 TIME_METRICS = ('epoch_time', 'infer_time')
 METRICS = ERROR_METRICS + TIME_METRICS
 
@@ -102,9 +105,11 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         print('No RESULT lines found.')
         return
 
-    # (title, width) for each column. The four aggregated columns share a width
-    # so the mean +/- std values line up under their headers.
+    # (title, width) for each column. The aggregated columns share a width so
+    # the mean +/- std values line up under their headers. Masked columns are
+    # shown only when at least one group actually ran the input-mask evaluation.
     AGG_W = 22
+    has_masked = any(not math.isnan(row['masked_mse_mean']) for row in rows)
     columns = [
         ('model', 12, '<'),
         ('dataset', 10, '<'),
@@ -114,6 +119,13 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         ('params', 14, '>'),
         ('MSE (mean+/-std)', AGG_W, '>'),
         ('MAE (mean+/-std)', AGG_W, '>'),
+    ]
+    if has_masked:
+        columns += [
+            ('Masked MSE', AGG_W, '>'),
+            ('Masked MAE', AGG_W, '>'),
+        ]
+    columns += [
         ('Train s/epoch', AGG_W, '>'),
         ('Infer s', AGG_W, '>'),
     ]
@@ -123,6 +135,8 @@ def print_table(rows: list[dict[str, Any]]) -> None:
     print('-' * len(header))
 
     def fmt_agg(mean: float, std: float, decimals: int) -> str:
+        if math.isnan(mean):
+            return '-'
         return f'{mean:.{decimals}f} +/- {std:.{decimals}f}'
 
     for row in rows:
@@ -136,6 +150,13 @@ def print_table(rows: list[dict[str, Any]]) -> None:
             params,
             fmt_agg(row['mse_mean'], row['mse_std'], 5),
             fmt_agg(row['mae_mean'], row['mae_std'], 5),
+        ]
+        if has_masked:
+            values += [
+                fmt_agg(row['masked_mse_mean'], row['masked_mse_std'], 5),
+                fmt_agg(row['masked_mae_mean'], row['masked_mae_std'], 5),
+            ]
+        values += [
             fmt_agg(row['epoch_time_mean'], row['epoch_time_std'], 3),
             fmt_agg(row['infer_time_mean'], row['infer_time_std'], 3),
         ]
@@ -157,6 +178,10 @@ def write_csv(rows: list[dict[str, Any]], csv_path: Path) -> None:
         'mse_std',
         'mae_mean',
         'mae_std',
+        'masked_mse_mean',
+        'masked_mse_std',
+        'masked_mae_mean',
+        'masked_mae_std',
         'epoch_time_mean',
         'epoch_time_std',
         'infer_time_mean',

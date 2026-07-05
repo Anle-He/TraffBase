@@ -23,11 +23,8 @@ class ExperimentConfigLayoutTests(unittest.TestCase):
             with self.subTest(config=path.relative_to(ROOT)):
                 cfg = yaml.safe_load(path.read_text(encoding='utf-8'))
                 self.assertEqual(cfg['DATA']['out_steps'], 12)
-                self.assertEqual(cfg['GENERAL']['runner'], 'LTSFTrainer')
-                self.assertEqual(
-                    cfg['OPTIM']['lr_scheduler_type'],
-                    'ExponentialLR',
-                )
+                self.assertNotIn('runner', cfg['GENERAL'])
+                self.assertNotIn('lr_scheduler_type', cfg['OPTIM'])
 
     def test_dataset_launchers_resolve_existing_base_configs(self) -> None:
         launchers = sorted(

@@ -52,11 +52,19 @@ class InputMaskSettingsTests(unittest.TestCase):
             )
 
 
+def _seeded_generator(seed: int) -> torch.Generator:
+    generator = torch.Generator(device='cpu')
+    generator.manual_seed(seed)
+    return generator
+
+
 class RandomTimeMaskTests(unittest.TestCase):
     def test_masks_exact_steps_shared_by_all_nodes(self) -> None:
         inputs = torch.ones(4, 12, 5, 1)
 
-        masked = apply_random_time_mask(inputs, steps=3, seed=2024)
+        masked = apply_random_time_mask(
+            inputs, steps=3, generator=_seeded_generator(2024)
+        )
         masked_times = masked[..., 0].eq(0).all(dim=2)
 
         self.assertTrue(torch.equal(inputs, torch.ones_like(inputs)))
@@ -70,12 +78,34 @@ class RandomTimeMaskTests(unittest.TestCase):
     def test_same_seed_is_reproducible(self) -> None:
         inputs = torch.ones(8, 24, 3, 1)
 
-        first = apply_random_time_mask(inputs, steps=6, seed=2024)
-        second = apply_random_time_mask(inputs, steps=6, seed=2024)
-        different = apply_random_time_mask(inputs, steps=6, seed=2025)
+        first = apply_random_time_mask(
+            inputs, steps=6, generator=_seeded_generator(2024)
+        )
+        second = apply_random_time_mask(
+            inputs, steps=6, generator=_seeded_generator(2024)
+        )
+        different = apply_random_time_mask(
+            inputs, steps=6, generator=_seeded_generator(2025)
+        )
 
         self.assertTrue(torch.equal(first, second))
         self.assertFalse(torch.equal(first, different))
+
+    def test_masks_do_not_depend_on_batch_size(self) -> None:
+        inputs = torch.ones(8, 24, 3, 1)
+
+        full = apply_random_time_mask(
+            inputs, steps=6, generator=_seeded_generator(2024)
+        )
+        generator = _seeded_generator(2024)
+        halves = torch.cat(
+            [
+                apply_random_time_mask(inputs[:4], steps=6, generator=generator),
+                apply_random_time_mask(inputs[4:], steps=6, generator=generator),
+            ]
+        )
+
+        self.assertTrue(torch.equal(full, halves))
 
 
 class LTSFTrainerMaskFlowTests(unittest.TestCase):
@@ -88,7 +118,6 @@ class LTSFTrainerMaskFlowTests(unittest.TestCase):
             super().__init__(
                 cfg=cfg,
                 device=torch.device('cpu'),
-                scaler=None,
                 log=log,
                 seed=seed,
             )
@@ -159,7 +188,6 @@ class LTSFTrainerFitMetricsTests(unittest.TestCase):
                     'OPTIM': {},
                 },
                 device=torch.device('cpu'),
-                scaler=None,
                 log=io.StringIO(),
             )
             self.predict_loaders: list[object] = []

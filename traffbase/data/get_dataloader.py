@@ -3,7 +3,7 @@ from typing import Any
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 
 from traffbase.utils import StandardScaler
 from traffbase.utils import print_log
@@ -23,87 +23,74 @@ def _build_features(tod: bool, dow: bool) -> list[int]:
     return features
 
 
-def _slice_data(
-    data: np.ndarray, indices: np.ndarray, x_features: list[int], y_features: list[int]
-) -> tuple[np.ndarray, np.ndarray]:
-    num_samples = len(indices)
-    x_len = indices[0, 1] - indices[0, 0]
-    y_len = indices[0, 2] - indices[0, 1]
-    num_nodes = data.shape[1]
+class SlidingWindowDataset(Dataset):
+    '''Slices (x, y) windows out of the base series on access.
 
-    # data format: (timesteps, nodes, features)
-    # output format: (num_samples, seq_len, num_nodes, num_features)
-    x_data = np.empty(
-        (num_samples, x_len, num_nodes, len(x_features)), dtype=data.dtype
-    )
-    y_data = np.empty(
-        (num_samples, y_len, num_nodes, len(y_features)), dtype=data.dtype
-    )
+    Materializing every window up front copies the base series roughly
+    ``in_steps`` times over (adjacent windows share almost all their data);
+    slicing in ``__getitem__`` keeps a single float32 copy of the series in
+    memory regardless of the number of samples.
+    '''
 
-    for i, (start, mid, end) in enumerate(indices):
-        x_data[i] = data[start:mid, :, x_features]  # (x_len, num_nodes, num_features)
-        y_data[i] = data[mid:end, :, y_features]  # (y_len, num_nodes, num_features)
+    def __init__(
+        self,
+        data: torch.Tensor,
+        indices: np.ndarray,
+        x_features: list[int],
+        y_features: list[int],
+    ) -> None:
+        self.data = data  # [timesteps, num_nodes, num_features]
+        self.indices = indices  # [num_samples, 3] of (start, mid, end)
+        self.x_features = torch.tensor(x_features)
+        self.y_features = torch.tensor(y_features)
 
-    return x_data, y_data
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor]:
+        start, mid, end = (int(v) for v in self.indices[i])
+        x = self.data[start:mid].index_select(-1, self.x_features)
+        y = self.data[mid:end].index_select(-1, self.y_features)
+        return x, y
 
 
 def _create_dataloaders(
-    x_train: np.ndarray,
-    y_train: np.ndarray,
-    x_val: np.ndarray,
-    y_val: np.ndarray,
-    x_test: np.ndarray,
-    y_test: np.ndarray,
+    trainset: Dataset,
+    valset: Dataset,
+    testset: Dataset,
     batch_size: int,
-    num_workers: int = 4,
-    pin_memory: bool = True,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
-    trainset = TensorDataset(torch.FloatTensor(x_train), torch.FloatTensor(y_train))
-    valset = TensorDataset(torch.FloatTensor(x_val), torch.FloatTensor(y_val))
-    testset = TensorDataset(torch.FloatTensor(x_test), torch.FloatTensor(y_test))
-
-    persistent = num_workers > 0
-
+    # The datasets are in-memory tensor slices; worker processes would only add
+    # IPC overhead (and copy the series per worker under spawn), so load in the
+    # main process.
     train_loader = DataLoader(
-        trainset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        persistent_workers=persistent,
+        trainset, batch_size=batch_size, shuffle=True, pin_memory=True
     )
     val_loader = DataLoader(
-        valset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        persistent_workers=persistent,
+        valset, batch_size=batch_size, shuffle=False, pin_memory=True
     )
     test_loader = DataLoader(
-        testset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        persistent_workers=persistent,
+        testset, batch_size=batch_size, shuffle=False, pin_memory=True
     )
 
     return train_loader, val_loader, test_loader
 
 
 def _log_dataset_shapes(
-    x_train: np.ndarray,
-    y_train: np.ndarray,
-    x_val: np.ndarray,
-    y_val: np.ndarray,
-    x_test: np.ndarray,
-    y_test: np.ndarray,
+    trainset: SlidingWindowDataset,
+    valset: SlidingWindowDataset,
+    testset: SlidingWindowDataset,
     log: Any = None,
 ) -> None:
-    print_log(f'{"Trainset:":<10}x-{str(x_train.shape):<22}y-{y_train.shape}', log=log)
-    print_log(f'{"Valset:":<10}x-{str(x_val.shape):<22}y-{y_val.shape}', log=log)
-    print_log(f'{"Testset:":<10}x-{str(x_test.shape):<22}y-{y_test.shape}', log=log)
+    for name, dataset in (
+        ('Trainset:', trainset),
+        ('Valset:', valset),
+        ('Testset:', testset),
+    ):
+        x, y = dataset[0]
+        x_shape = (len(dataset), *x.shape)
+        y_shape = (len(dataset), *y.shape)
+        print_log(f'{name:<10}x-{str(x_shape):<22}y-{y_shape}', log=log)
 
 
 def build_LTSF_dataloader(
@@ -116,7 +103,7 @@ def build_LTSF_dataloader(
     y_tod: bool = False,
     y_dow: bool = False,
     log: Any = None,
-) -> tuple[DataLoader, DataLoader, DataLoader, StandardScaler]:
+) -> tuple[DataLoader, DataLoader, DataLoader]:
     data_path = Path(data_dir)
     data_file = data_path / 'processed_data.npz'
     index_file = data_path / f'index_in{in_steps}_out{out_steps}.npz'
@@ -126,7 +113,7 @@ def build_LTSF_dataloader(
         missing = ', '.join(str(path) for path in missing_files)
         raise FileNotFoundError(f'Required dataset files not found: {missing}')
 
-    data = np.load(data_file)['data']
+    data = np.load(data_file)['data'].astype(np.float32)
     index = np.load(index_file)
 
     x_features = _build_features(x_tod, x_dow)
@@ -143,16 +130,13 @@ def build_LTSF_dataloader(
     )
 
     data[..., FEATURE_MAIN] = scaler.transform(data[..., FEATURE_MAIN])
+    series = torch.from_numpy(data)
 
-    x_train, y_train = _slice_data(data, train_index, x_features, y_features)
-    x_val, y_val = _slice_data(data, val_index, x_features, y_features)
-    x_test, y_test = _slice_data(data, test_index, x_features, y_features)
+    trainset = SlidingWindowDataset(series, train_index, x_features, y_features)
+    valset = SlidingWindowDataset(series, val_index, x_features, y_features)
+    testset = SlidingWindowDataset(series, test_index, x_features, y_features)
 
-    _log_dataset_shapes(x_train, y_train, x_val, y_val, x_test, y_test, log)
+    _log_dataset_shapes(trainset, valset, testset, log)
     print_log('INFO: Using scaled X and Y for LTSF task', log=log)
 
-    train_loader, val_loader, test_loader = _create_dataloaders(
-        x_train, y_train, x_val, y_val, x_test, y_test, batch_size
-    )
-
-    return train_loader, val_loader, test_loader, scaler
+    return _create_dataloaders(trainset, valset, testset, batch_size)

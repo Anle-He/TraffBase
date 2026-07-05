@@ -27,19 +27,15 @@ DATA_DIR = Path('traffbase/data/datasets')
 LOG_DIR = Path('logs')
 CHECKPOINT_DIR = Path('checkpoints')
 
-DEFAULT_MODEL = 'DLinear'
-DEFAULT_TASK = 'LTSF'
-DEFAULT_DATASET = 'PEMS08'
 DEFAULT_SEED = 2024
 DEFAULT_DEVICE = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--model_name', type=str, default=DEFAULT_MODEL)
-    parser.add_argument('-t', '--task_name', type=str, default=DEFAULT_TASK)
-    parser.add_argument('-d', '--dataset_name', type=str, default=DEFAULT_DATASET)
-    parser.add_argument('-cfg', '--config_path', type=str, default=None)
+    parser.add_argument('-m', '--model_name', type=str, required=True)
+    parser.add_argument('-d', '--dataset_name', type=str, required=True)
+    parser.add_argument('-cfg', '--config_path', type=str, required=True)
     parser.add_argument('-sd', '--seed', type=int, default=DEFAULT_SEED)
     parser.add_argument(
         '-o',
@@ -90,9 +86,14 @@ def load_config(config_path: str) -> dict[str, Any]:
 
 
 def config_fingerprint(cfg: dict[str, Any]) -> str:
-    '''Return a stable short identifier for the effective run configuration.'''
+    '''Return a stable short identifier for the effective run configuration.
+
+    The `TEST` section only affects test-time evaluation (never the trained
+    model or the clean metrics), so it is excluded — toggling e.g. the input
+    mask must not split otherwise identical runs into separate result groups.
+    '''
     payload = json.dumps(
-        cfg,
+        {key: value for key, value in cfg.items() if key != 'TEST'},
         ensure_ascii=False,
         sort_keys=True,
         separators=(',', ':'),
@@ -101,69 +102,39 @@ def config_fingerprint(cfg: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]
 
 
-def create_log_file(model_name: str, task_name: str, dataset_name: str, log_time: str) -> TextIO:
+def create_log_file(model_name: str, dataset_name: str, log_time: str) -> TextIO:
     log_dir = LOG_DIR / f'{model_name}_{dataset_name.upper()}'
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    log_file = (
-        log_dir
-        / f'{model_name}-{task_name.upper()}-{dataset_name.upper()}-{log_time}.log'
-    )
+    log_file = log_dir / f'{model_name}-{dataset_name.upper()}-{log_time}.log'
 
-    log_file.write_text('')
-
-    return log_file.open('a', encoding='utf-8')
+    return log_file.open('w', encoding='utf-8')
 
 
-def create_checkpoint_path(model_name: str, task_name: str, dataset_name: str, log_time: str) -> Path:
+def create_checkpoint_path(model_name: str, dataset_name: str, log_time: str) -> Path:
     checkpoint_dir = CHECKPOINT_DIR / f'{model_name}_{dataset_name.upper()}'
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    return (
-        checkpoint_dir
-        / f'{model_name}-{task_name.upper()}-{dataset_name.upper()}-{log_time}.pt'
-    )
-
-
-def _validate_runtime_selection(task_name: str, cfg: dict[str, Any]) -> None:
-    '''Validate the retained compatibility fields for the LTSF-only pipeline.'''
-
-    if task_name.upper() != 'LTSF':
-        raise ValueError(
-            f'Unknown task {task_name!r}. TraffBase currently supports only LTSF.'
-        )
-
-    runner = cfg['GENERAL'].get('runner', 'LTSFTrainer')
-    if runner != 'LTSFTrainer':
-        raise ValueError(
-            f'Unknown runner {runner!r}. TraffBase currently supports only '
-            'LTSFTrainer.'
-        )
-
-    scheduler_type = cfg['OPTIM'].get('lr_scheduler_type', 'ExponentialLR')
-    if scheduler_type != 'ExponentialLR':
-        raise ValueError(
-            f'Unknown lr_scheduler_type {scheduler_type!r}. TraffBase currently '
-            'supports only ExponentialLR.'
-        )
+    return checkpoint_dir / f'{model_name}-{dataset_name.upper()}-{log_time}.pt'
 
 
 def run(
     model_name: str,
-    task_name: str,
     dataset_name: str,
     cfg: dict[str, Any],
     seed: int,
     device: torch.device,
+    save_checkpoint: bool = True,
 ) -> dict[str, float]:
     '''Train + evaluate one model on one config and return its metrics.
 
     This is the single source of truth for a single run, shared by the CLI
     (`main`) and the hyperparameter search (`tune.py`). It reports test metrics
     in the log but also returns `val_mse`/`val_mae` so callers that must avoid
-    test leakage (HPO) can select on validation.
+    test leakage (HPO) can select on validation. `save_checkpoint=False` skips
+    writing the best weights to `checkpoints/` — search trials only need the
+    returned metrics, and their weights are never loaded again.
     '''
-    _validate_runtime_selection(task_name, cfg)
     set_random_seed(seed)
 
     in_steps = cfg['DATA'].get('in_steps', 96)
@@ -182,11 +153,11 @@ def run(
     model = model_arch(**model_args).to(device)
 
     run_time = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    log = create_log_file(model_name, task_name, dataset_name, run_time)
+    log = create_log_file(model_name, dataset_name, run_time)
 
     print_log(f'Dataset used: {dataset_name.upper()}', log=log)
     data_path = DATA_DIR / dataset_name
-    train_loader, val_loader, test_loader, scaler = build_LTSF_dataloader(
+    train_loader, val_loader, test_loader = build_LTSF_dataloader(
         data_path,
         batch_size=cfg['GENERAL'].get('batch_size', 32),
         in_steps=in_steps,
@@ -199,8 +170,10 @@ def run(
     )
     print_log(log=log)
 
-    checkpoint_path = create_checkpoint_path(
-        model_name, task_name, dataset_name, run_time
+    checkpoint_path = (
+        create_checkpoint_path(model_name, dataset_name, run_time)
+        if save_checkpoint
+        else None
     )
 
     criterion = select_loss(cfg['OPTIM'].get('loss', 'MSE'))(
@@ -216,9 +189,7 @@ def run(
         gamma=cfg['OPTIM'].get('lr_scheduler_gamma', 0.5),
     )
 
-    trainer = LTSFTrainer(
-        cfg, device=device, scaler=scaler, log=log, seed=seed
-    )
+    trainer = LTSFTrainer(cfg, device=device, log=log, seed=seed)
 
     print_log(banner(model_name), log=log)
     print_log(f'Random Seed = {seed}', log=log)
@@ -241,7 +212,8 @@ def run(
             log=log,
         )
 
-    print_log(f'Checkpoints saved at: {checkpoint_path}', log=log)
+    if checkpoint_path is not None:
+        print_log(f'Checkpoints saved at: {checkpoint_path}', log=log)
     print_log(log=log)
     model, val_mse, val_mae = trainer.train_model(
         model,
@@ -253,20 +225,25 @@ def run(
         max_epochs=cfg['GENERAL'].get('max_epochs', 10),
         early_stop_patience=cfg['GENERAL'].get('early_stop_patience', 3),
         verbose=1,
-        save=str(checkpoint_path),
+        save=str(checkpoint_path) if checkpoint_path is not None else None,
     )
 
     metrics = trainer.test_model(model, test_loader)
 
-    print_log(
+    result_line = (
         f'RESULT | model={model_name} dataset={dataset_name.upper()} '
         f'horizon={out_steps} seed={seed} config_id={config_id} '
         f'params={total_params} '
         f'epoch_time={trainer.epoch_time:.3f} infer_time={metrics["infer_time"]:.3f} '
         f'val_mse={val_mse:.5f} val_mae={val_mae:.5f} '
-        f'mse={metrics["clean_mse"]:.5f} mae={metrics["clean_mae"]:.5f}',
-        log=log,
+        f'mse={metrics["clean_mse"]:.5f} mae={metrics["clean_mae"]:.5f}'
     )
+    if 'masked_mse' in metrics:
+        result_line += (
+            f' masked_mse={metrics["masked_mse"]:.5f} '
+            f'masked_mae={metrics["masked_mae"]:.5f}'
+        )
+    print_log(result_line, log=log)
 
     log.close()
     torch.cuda.empty_cache()
@@ -292,7 +269,7 @@ def main() -> None:
     cfg = load_config(args.config_path)
     apply_overrides(cfg, args.override)
 
-    run(args.model_name, args.task_name, args.dataset_name, cfg, args.seed, device)
+    run(args.model_name, args.dataset_name, cfg, args.seed, device)
 
 
 if __name__ == '__main__':
