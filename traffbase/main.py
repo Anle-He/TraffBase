@@ -48,6 +48,14 @@ def parse_args() -> argparse.Namespace:
             '-o MODEL_PARAM.d_model=256. Repeatable.'
         ),
     )
+    parser.add_argument(
+        '--validation-only',
+        action='store_true',
+        help=(
+            'Stop after validation when comparing candidate configurations; '
+            'skip checkpoint saving, test evaluation, and the formal RESULT line.'
+        ),
+    )
     return parser.parse_args()
 
 
@@ -124,16 +132,13 @@ def run(
     cfg: dict[str, Any],
     seed: int,
     device: torch.device,
-    save_checkpoint: bool = True,
+    validation_only: bool = False,
 ) -> dict[str, float]:
-    '''Train + evaluate one model on one config and return its metrics.
+    '''Train one model and return its validation and optional test metrics.
 
-    This is the single source of truth for a single run, shared by the CLI
-    (`main`) and the hyperparameter search (`tune.py`). It reports test metrics
-    in the log but also returns `val_mse`/`val_mae` so callers that must avoid
-    test leakage (HPO) can select on validation. `save_checkpoint=False` skips
-    writing the best weights to `checkpoints/` — search trials only need the
-    returned metrics, and their weights are never loaded again.
+    Validation-only runs do not save a checkpoint, evaluate the test split, or
+    emit a formal `RESULT` record. They are intended for manual config comparison;
+    normal runs perform test evaluation and produce the reportable artifacts.
     '''
     set_random_seed(seed)
 
@@ -170,11 +175,14 @@ def run(
     )
     print_log(log=log)
 
-    checkpoint_path = (
-        create_checkpoint_path(model_name, dataset_name, run_time)
-        if save_checkpoint
-        else None
-    )
+    checkpoint_path = None
+    if validation_only:
+        print_log(
+            'Validation-only run: checkpoint saving and test evaluation are disabled.',
+            log=log,
+        )
+    else:
+        checkpoint_path = create_checkpoint_path(model_name, dataset_name, run_time)
 
     criterion = select_loss(cfg['OPTIM'].get('loss', 'MSE'))(
         **cfg['OPTIM'].get('loss_args', {})
@@ -228,6 +236,23 @@ def run(
         save=str(checkpoint_path) if checkpoint_path is not None else None,
     )
 
+    if validation_only:
+        print_log(
+            f'VALIDATION | model={model_name} dataset={dataset_name.upper()} '
+            f'horizon={out_steps} seed={seed} config_id={config_id} '
+            f'params={total_params} epoch_time={trainer.epoch_time:.3f} '
+            f'val_mse={val_mse:.5f} val_mae={val_mae:.5f}',
+            log=log,
+        )
+        log.close()
+        torch.cuda.empty_cache()
+        return {
+            'val_mse': val_mse,
+            'val_mae': val_mae,
+            'total_params': float(total_params),
+            'epoch_time': trainer.epoch_time,
+        }
+
     metrics = trainer.test_model(model, test_loader)
 
     result_line = (
@@ -269,7 +294,14 @@ def main() -> None:
     cfg = load_config(args.config_path)
     apply_overrides(cfg, args.override)
 
-    run(args.model_name, args.dataset_name, cfg, args.seed, device)
+    run(
+        args.model_name,
+        args.dataset_name,
+        cfg,
+        args.seed,
+        device,
+        validation_only=args.validation_only,
+    )
 
 
 if __name__ == '__main__':

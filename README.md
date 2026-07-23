@@ -54,46 +54,29 @@ python -u -m traffbase.main -m SMamba -d BJ500 \
     -o MODEL_PARAM.d_model=256
 ```
 
-## Hyperparameter search
+## Manual parameter tuning
 
-`traffbase/tune.py` is a lightweight search driver built on the same `run()` that
-`main.py` uses — it adds no machinery to the training loop. It loads a base config,
-lets [Optuna](https://optuna.org/) (`pip install optuna`) propose a few high-impact
-knobs, overrides them in the config, runs one training, and **selects on the
-validation metric** (test is never used to choose). The search space lives in
-`suggest_params` in `tune.py`; edit it per model.
-
-Search cheaply (single seed, truncated epochs) on one horizon; trials do not
-write checkpoints — only the confirmed runs below do:
+The model search spaces are small, so candidate settings are compared directly
+from the base config instead of through a separate automatic search framework.
+Use repeatable `-o` flags together with `--validation-only`; this mode does not save
+a checkpoint, evaluate the test split, or emit a formal `RESULT` record:
 
 ```bash
-python -m traffbase.tune -m SMamba -d BJ500 \
-    -cfg traffbase/models/SMamba/configs/BJ500.yaml \
-    -o DATA.out_steps=96 --n-trials 20 --search-epochs 8
+python -u -m traffbase.main -m SMamba -d BJ500 \
+    -cfg traffbase/models/SMamba/configs/BJ500.yaml -sd 2024 \
+    -o DATA.out_steps=96 -o OPTIM.initial_lr=0.0005 \
+    -o MODEL_PARAM.d_model=256 --validation-only
 ```
 
-It prints the best trial's params and a ready-to-run command. Then confirm that
-setting with full-length training via the shared grid runner, whose defaults are
-already the full `HORIZONS x SEEDS` grid, passing the `-o` flags through:
-
-```bash
-bash ./scripts/run_grid.sh SMamba BJ500 \
-    -o OPTIM.initial_lr=0.000731 -o MODEL_PARAM.d_model=256 \
-    -o MODEL_PARAM.e_layers=3 -o MODEL_PARAM.d_state=32
-```
-
-The test metrics for the confirmed setting are then aggregated across seeds the
-usual way (`python analysis/aggregate_results.py`) — searching only fixes the
-hyperparameter values, it does not change how the reported test result is obtained.
-
-The built-in Mamba model uses `hidden_dim` and `num_layers`; its search space and
-printed `-o` flags use those exact `MODEL_PARAM` names rather than the
-`d_model`/`e_layers` names used by SMamba and iTransformer.
+Compare candidates only by `val_mse`/`val_mae`. Once a setting is selected, write
+it into the model-dataset base YAML and launch the normal `HORIZONS x SEEDS` grid.
+Normal runs save checkpoints, evaluate test, and emit the `RESULT` records consumed
+by the aggregation script.
 
 ## Aggregating results
 
 Every `RESULT |` line includes a `config_id` derived from the effective YAML after
-CLI or HPO overrides. The `TEST` section is excluded from the fingerprint: it only
+CLI overrides. The `TEST` section is excluded from the fingerprint: it only
 affects test-time evaluation, so enabling e.g. the input mask does not split
 otherwise identical runs into separate groups. Run:
 
@@ -101,10 +84,10 @@ otherwise identical runs into separate groups. Run:
 python analysis/aggregate_results.py
 ```
 
-Results are grouped by model, dataset, horizon, and config ID, so different HPO
-trials or confirmed settings are not averaged together. If the same configuration
-and seed are rerun, only the latest log is included. Older logs without a config ID
-remain available under a legacy group.
+Results are grouped by model, dataset, horizon, and config ID, so different
+configurations are not averaged together. If the same configuration and seed are
+rerun, only the latest log is included. Older logs without a config ID remain
+available under a legacy group.
 
 ## Data
 

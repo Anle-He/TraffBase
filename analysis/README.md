@@ -16,10 +16,11 @@ seed, and reports across seeds:
 - mean +/- std of the training time (seconds per epoch) and inference time
   (seconds for the test pass).
 
-For new runs, the config ID is derived from the effective YAML after CLI/HPO
-overrides, so search trials and confirmed runs with different settings are never
-averaged together. Older `RESULT` lines without `config_id` are retained in a
-legacy group; missing config/timing columns show `-` or `nan`.
+For new runs, the config ID is derived from the effective YAML after CLI
+overrides, so runs with different settings are never averaged together.
+Validation-only comparisons emit `VALIDATION` rather than `RESULT` and are not
+included here. Older `RESULT` lines without `config_id` are retained in a legacy
+group; missing config/timing columns show `-` or `nan`.
 
 ```bash
 # Print the aggregated table
