@@ -42,9 +42,6 @@ class StandardScaler:
     def transform(self, data: np.ndarray) -> np.ndarray:
         return (data - self.mean) / self.std
 
-    def inverse_transform(self, data: np.ndarray) -> np.ndarray:
-        return (data * self.std) + self.mean
-
 
 def print_log(
     *values: object, log: TextIO | None = None, end: str = '\n'
